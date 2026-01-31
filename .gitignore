@@ -1,0 +1,6 @@
+.env
+.env.*
+vendor/
+node_modules/
+dbdata/
+.DS_Store

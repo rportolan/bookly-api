@@ -1,0 +1,36 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+    env_file:
+      - .env.staging
+
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: bookly
+      MYSQL_USER: bookly
+      MYSQL_PASSWORD: bookly
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - dbdata:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+      PMA_USER: bookly
+      PMA_PASSWORD: bookly
+    depends_on:
+      - db
+
+  
+
+volumes:
+  dbdata:
