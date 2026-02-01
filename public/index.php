@@ -21,37 +21,22 @@ use App\Controllers\LearnController;
 use App\Controllers\DashboardController;
 
 /**
- * Bootstrap
+ * Bootstrap env
+ * - Local: .env exists => load it
+ * - Railway/Prod: use Railway Variables => .env may not exist
  */
-Env::load(__DIR__ . '/../.env');
-
-header('Content-Type: application/json; charset=utf-8');
-
-/**
- * Optional session (legacy / web-only)
- * Par défaut: OFF (API stateless)
- */
-$enableSessions = Env::get('ENABLE_SESSIONS', '0') === '1';
-if ($enableSessions) {
-    $cookieParams = session_get_cookie_params();
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (($_SERVER['SERVER_PORT'] ?? '') === '443');
-
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path'     => '/',
-        'domain'   => $cookieParams['domain'] ?? '',
-        'secure'   => $isHttps,
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
-
-    session_name('bookly_session');
-    session_start();
+$envFile = __DIR__ . '/../.env';
+if (is_file($envFile)) {
+    Env::load($envFile);
 }
 
 /**
- * CORS (utile pour web; mobile pas concerné mais ok)
+ * JSON by default (API)
+ */
+header('Content-Type: application/json; charset=utf-8');
+
+/**
+ * CORS
  */
 $allowed = Env::get('CORS_ORIGIN', 'http://localhost:5173');
 $allowedOrigins = array_values(array_filter(array_map('trim', explode(',', $allowed))));
@@ -60,7 +45,6 @@ $reqOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if ($reqOrigin && in_array($reqOrigin, $allowedOrigins, true)) {
     header("Access-Control-Allow-Origin: {$reqOrigin}");
     header("Vary: Origin");
-    // Si tu utilises cookies côté web : true. Sinon tu peux laisser false.
     header("Access-Control-Allow-Credentials: true");
 }
 
@@ -73,27 +57,57 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
 }
 
 /**
- * Error handling centralisé
+ * Optional sessions (OFF by default)
+ */
+try {
+    $enableSessions = Env::get('ENABLE_SESSIONS', '0') === '1';
+    if ($enableSessions) {
+        $cookieParams = session_get_cookie_params();
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (($_SERVER['SERVER_PORT'] ?? '') === '443');
+
+        session_set_cookie_params([
+            'lifetime' => 0,
+            'path'     => '/',
+            'domain'   => $cookieParams['domain'] ?? '',
+            'secure'   => $isHttps,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+
+        session_name('bookly_session');
+        session_start();
+    }
+} catch (Throwable $e) {
+    // Sessions should never take down the API
+    error_log("[BOOKLY][sessions] " . $e->getMessage());
+}
+
+/**
+ * Central error handler
+ * - Never leak details in prod
+ * - Always log details to Railway
  */
 set_exception_handler(function (Throwable $e) {
     $env = Env::get('APP_ENV', 'prod');
     $isDev = ($env === 'dev');
 
-    if ($e instanceof \App\Core\HttpException) {
+    error_log("[BOOKLY][exception] " . get_class($e) . " :: " . $e->getMessage());
+    error_log($e->getTraceAsString());
+
+    if ($e instanceof HttpException) {
         Response::error(
             $e->errorCode,
             $e->getMessage(),
             $e->status,
-            $e->details
+            $isDev ? $e->details : []
         );
         exit;
     }
 
-    // Erreur inattendue => 500
     $details = $isDev ? [
         'type' => get_class($e),
         'message' => $e->getMessage(),
-        // 'trace' => $e->getTraceAsString(), // si tu veux, mais évite en prod
     ] : [];
 
     Response::error('SERVER_ERROR', 'Server error', 500, $details);
@@ -101,24 +115,38 @@ set_exception_handler(function (Throwable $e) {
 });
 
 /**
- * Routes
+ * Router
  */
 $router = new Router();
 
-$health = new HealthController();
-$auth = new AuthController();
-$dashboard = new DashboardController();
-$users = new UsersController();
-$books = new BooksController();
-$quotes = new QuotesController();
-$vocab = new VocabController();
-$chapters = new ChaptersController();
-$quests = new QuestsController();
-$reading = new ReadingController();
-$learn = new LearnController();
+/**
+ * Basic root route so Railway health / browser doesn't get a random 500
+ */
+$router->add('GET', '/', function () {
+    echo json_encode([
+        'ok' => true,
+        'service' => 'bookly-api',
+        'version' => 'v1'
+    ]);
+});
 
 /**
- * Base prefix
+ * Controllers
+ */
+$health     = new HealthController();
+$auth       = new AuthController();
+$dashboard  = new DashboardController();
+$users      = new UsersController();
+$books      = new BooksController();
+$quotes     = new QuotesController();
+$vocab      = new VocabController();
+$chapters   = new ChaptersController();
+$quests     = new QuestsController();
+$reading    = new ReadingController();
+$learn      = new LearnController();
+
+/**
+ * API prefix
  */
 $prefix = '/v1';
 
@@ -130,13 +158,13 @@ $router->add('POST', "{$prefix}/auth/register", fn() => $auth->register());
 $router->add('POST', "{$prefix}/auth/login",    fn() => $auth->login());
 $router->add('POST', "{$prefix}/auth/logout",   fn() => $auth->logout());
 $router->add('GET',  "{$prefix}/me",            fn() => $auth->me());
-$router->add('POST', "{$prefix}/auth/refresh", fn() => $auth->refresh());
+$router->add('POST', "{$prefix}/auth/refresh",  fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 
 // Dashboard
 $router->add('GET', "{$prefix}/dashboard/continue", fn() => $dashboard->continue());
 
-// Users (Settings)
+// Users
 $router->add('PATCH',  "{$prefix}/me",          fn() => $users->updateMe());
 $router->add('PATCH',  "{$prefix}/me/password", fn() => $users->changePassword());
 $router->add('DELETE', "{$prefix}/me",          fn() => $users->deleteMe());
@@ -150,31 +178,31 @@ $router->add('DELETE', "{$prefix}/books/{id:\d+}",      fn($p) => $books->destro
 $router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress", fn($p) => $books->updateProgress($p));
 
 // Quotes
-$router->add('GET',    "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->store($p));
-$router->add('DELETE', "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quotes->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quotes->update($p));
+$router->add('GET',    "{$prefix}/books/{id}/quotes",            fn($p) => $quotes->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/quotes",            fn($p) => $quotes->store($p));
+$router->add('DELETE', "{$prefix}/books/{id}/quotes/{quoteId}",  fn($p) => $quotes->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/quotes/{quoteId}",  fn($p) => $quotes->update($p));
 
 // Vocab
-$router->add('GET',    "{$prefix}/books/{id}/vocab",           fn($p) => $vocab->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/vocab",           fn($p) => $vocab->store($p));
-$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}", fn($p) => $vocab->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}", fn($p) => $vocab->update($p));
+$router->add('GET',    "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->store($p));
+$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}",   fn($p) => $vocab->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}",   fn($p) => $vocab->update($p));
 
 // Chapters
-$router->add('GET',    "{$prefix}/books/{id}/chapters",             fn($p) => $chapters->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/chapters",             fn($p) => $chapters->store($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->update($p));
-$router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->destroy($p));
+$router->add('GET',    "{$prefix}/books/{id}/chapters",              fn($p) => $chapters->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/chapters",              fn($p) => $chapters->store($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->update($p));
+$router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->destroy($p));
 
 // Quests
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
 
 // Reading
-$router->add('GET',   "{$prefix}/reading/goal",      fn() => $reading->getGoal());
-$router->add('PATCH', "{$prefix}/reading/goal",      fn() => $reading->updateGoal());
-$router->add('GET',   "{$prefix}/reading/log",       fn() => $reading->getLog());
-$router->add('PATCH', "{$prefix}/reading/log/today", fn() => $reading->upsertToday());
+$router->add('GET',   "{$prefix}/reading/goal",        fn() => $reading->getGoal());
+$router->add('PATCH', "{$prefix}/reading/goal",        fn() => $reading->updateGoal());
+$router->add('GET',   "{$prefix}/reading/log",         fn() => $reading->getLog());
+$router->add('PATCH', "{$prefix}/reading/log/today",   fn() => $reading->upsertToday());
 
 // Learn
 $router->add('GET',  "{$prefix}/learn/books",            fn() => $learn->books());
@@ -192,8 +220,7 @@ if ($uri !== '/' && str_ends_with($uri, '/')) {
 }
 
 /**
- * Alias temporaire: /api/* => /v1/*
- * (pour ne pas casser ton front actuel)
+ * Alias: /api/* => /v1/*
  */
 if (str_starts_with($uri, '/api/')) {
     $uri = '/v1' . substr($uri, 4);
