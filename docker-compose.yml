@@ -6,8 +6,9 @@ services:
     volumes:
       - ./:/var/www/html
     env_file:
-      - .env.staging
-
+      - .env
+    depends_on:
+      - db
 
   db:
     image: mysql:8.0
@@ -29,8 +30,6 @@ services:
       PMA_PASSWORD: bookly
     depends_on:
       - db
-
-  
 
 volumes:
   dbdata:
