@@ -2,7 +2,8 @@
   "name": "bookly/backend",
   "type": "project",
   "require": {
-    "php": "^8.2"
+    "php": "^8.2",
+    "phpmailer/phpmailer": "*"
   },
   "autoload": {
     "psr-4": {

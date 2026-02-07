@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 namespace App\Repositories;
 
@@ -47,12 +48,14 @@ final class UserRepository
         $stmt = $pdo->prepare("
             INSERT INTO users (
                 email, username, password_hash,
+                email_verified_at,
                 first_name, last_name, bio,
                 goal_pages_per_day, language, density,
                 xp
             )
             VALUES (
                 :email, :username, :password_hash,
+                :email_verified_at,
                 :first_name, :last_name, :bio,
                 :goal, :lang, :density,
                 :xp
@@ -63,6 +66,7 @@ final class UserRepository
             'email' => (string)($data['email'] ?? ''),
             'username' => (string)($data['username'] ?? ''),
             'password_hash' => (string)($data['password_hash'] ?? ''),
+            'email_verified_at' => $data['email_verified_at'] ?? null,
             'first_name' => (string)($data['first_name'] ?? ''),
             'last_name' => (string)($data['last_name'] ?? ''),
             'bio' => $data['bio'] ?? null,
@@ -75,10 +79,20 @@ final class UserRepository
         return (int)$pdo->lastInsertId();
     }
 
+    public function markEmailVerified(int $userId): void
+    {
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare("
+            UPDATE users
+            SET email_verified_at = NOW()
+            WHERE id = :id
+            LIMIT 1
+        ");
+        $stmt->execute(['id' => $userId]);
+    }
+
     /**
      * Update partiel: seuls les champs non-null sont modifiés.
-     * Ex: ['username' => 'x', 'bio' => null] => bio sera mis à null
-     *     ['username' => null] => username ne change pas
      */
     public function updateById(int $id, array $fields): void
     {
@@ -100,11 +114,7 @@ final class UserRepository
         foreach ($map as $key => $col) {
             if (!array_key_exists($key, $fields)) continue;
 
-            // null => on skip (ne change pas)
-            // MAIS si tu veux permettre de mettre bio à null, on le fait explicitement
-            // Donc: on modifie seulement si valeur !== null OU si key === 'bio'
             $val = $fields[$key];
-
             if ($val === null && $key !== 'bio') {
                 continue;
             }
@@ -143,6 +153,4 @@ final class UserRepository
         $stmt = $pdo->prepare("DELETE FROM users WHERE id = :id LIMIT 1");
         $stmt->execute(['id' => $id]);
     }
-
-    
 }

@@ -3,6 +3,16 @@ FROM php:8.3-apache
 # --- Apache modules ---
 RUN a2enmod rewrite headers
 
+# --- System deps for Composer + PHP zip extension ---
+# Needed for: composer prefer-dist (zip/unzip) and fallback source (git)
+RUN apt-get update && apt-get install -y \
+    git \
+    unzip \
+    zip \
+    libzip-dev \
+  && docker-php-ext-install zip \
+  && rm -rf /var/lib/apt/lists/*
+
 # --- PHP extensions ---
 RUN docker-php-ext-install pdo pdo_mysql
 
@@ -25,7 +35,7 @@ WORKDIR /var/www/html
 # Copy composer manifests first (build cache)
 COPY composer.json composer.lock* ./
 
-# Install deps (even if none, generates vendor/autoload.php)
+# Install deps (generates vendor/autoload.php)
 RUN composer install \
   --no-dev \
   --prefer-dist \

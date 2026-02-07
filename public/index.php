@@ -22,8 +22,6 @@ use App\Controllers\DashboardController;
 
 /**
  * Bootstrap env
- * - Local: .env exists => load it
- * - Railway/Prod: use Railway Variables => .env may not exist
  */
 $envFile = __DIR__ . '/../.env';
 if (is_file($envFile)) {
@@ -79,14 +77,11 @@ try {
         session_start();
     }
 } catch (Throwable $e) {
-    // Sessions should never take down the API
     error_log("[BOOKLY][sessions] " . $e->getMessage());
 }
 
 /**
  * Central error handler
- * - Never leak details in prod
- * - Always log details to Railway
  */
 set_exception_handler(function (Throwable $e) {
     $env = Env::get('APP_ENV', 'prod');
@@ -120,7 +115,7 @@ set_exception_handler(function (Throwable $e) {
 $router = new Router();
 
 /**
- * Basic root route so Railway health / browser doesn't get a random 500
+ * Root route
  */
 $router->add('GET', '/', function () {
     echo json_encode([
@@ -160,6 +155,10 @@ $router->add('POST', "{$prefix}/auth/logout",   fn() => $auth->logout());
 $router->add('GET',  "{$prefix}/me",            fn() => $auth->me());
 $router->add('POST', "{$prefix}/auth/refresh",  fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
+
+// ✅ Email verification (new)
+$router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
+$router->add('POST', "{$prefix}/auth/resend-verification", fn() => $auth->resendVerification());
 
 // Dashboard
 $router->add('GET', "{$prefix}/dashboard/continue", fn() => $dashboard->continue());
