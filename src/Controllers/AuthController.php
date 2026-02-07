@@ -9,6 +9,9 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Jwt;
+use App\Core\Mailer;
+
+use App\Repositories\EmailVerificationRepository;
 use App\Repositories\RefreshTokenRepository;
 use App\Repositories\UserRepository;
 use App\Services\ProgressService;
@@ -51,12 +54,15 @@ final class AuthController
             throw new HttpException(409, 'CONFLICT', ['field' => 'username'], 'Username already used');
         }
 
-        $hash = password_hash($password, PASSWORD_DEFAULT);
+        // ✅ Mieux que PASSWORD_DEFAULT : ARGON2ID si dispo
+        $algo = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
+        $hash = password_hash($password, $algo);
 
         $userId = $repo->create([
             'email' => $email,
             'username' => $username,
             'password_hash' => $hash,
+            'email_verified_at' => null,
         ]);
 
         $user = $repo->findById((int)$userId);
@@ -64,15 +70,14 @@ final class AuthController
             throw new HttpException(500, 'SERVER_ERROR', [], 'User not found after register');
         }
 
-        [$accessToken, $refreshToken] = $this->issueTokens((int)$userId);
+        // ✅ Crée token + envoie email
+        $this->sendVerificationEmail((int)$userId, $email);
 
         Response::created([
             'user' => $this->publicUser($user),
-            'tokens' => [
-                'tokenType' => 'Bearer',
-                'accessToken' => $accessToken,
-                'refreshToken' => $refreshToken,
-                'expiresIn' => (int)Env::get('JWT_ACCESS_TTL', '900'),
+            'verification' => [
+                'sent' => true,
+                'required' => true,
             ],
         ]);
     }
@@ -93,7 +98,6 @@ final class AuthController
         $repo = new UserRepository();
         $user = $repo->findByUsername($username);
 
-        // on ne révèle pas si user existe
         if (!$user) {
             throw new HttpException(401, 'UNAUTHORIZED', [], 'Invalid credentials');
         }
@@ -101,6 +105,13 @@ final class AuthController
         $hash = (string)($user['password_hash'] ?? '');
         if ($hash === '' || !password_verify($password, $hash)) {
             throw new HttpException(401, 'UNAUTHORIZED', [], 'Invalid credentials');
+        }
+
+        // ✅ Bloque tant que email non vérifié
+        if (empty($user['email_verified_at'])) {
+            throw new HttpException(403, 'EMAIL_NOT_VERIFIED', [
+                'action' => 'resend_verification',
+            ], 'Email not verified');
         }
 
         [$accessToken, $refreshToken] = $this->issueTokens((int)$user['id']);
@@ -117,8 +128,124 @@ final class AuthController
     }
 
     /**
+     * GET /v1/auth/verify-email?email=...&token=...
+     */
+    public function verifyEmail(): void
+    {
+        $email = trim((string)($_GET['email'] ?? ''));
+        $token = trim((string)($_GET['token'] ?? ''));
+
+        if ($email === '' || $token === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'required' => ['email', 'token'],
+            ], 'Missing required fields');
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'field' => 'email',
+            ], 'Invalid email');
+        }
+
+        $tokenHash = hash('sha256', $token);
+
+        $verifyRepo = new EmailVerificationRepository();
+        $row = $verifyRepo->findValidByEmailAndTokenHash($email, $tokenHash);
+
+        if (!$row) {
+            throw new HttpException(400, 'INVALID_TOKEN', [], 'Invalid verification link');
+        }
+
+        if (!empty($row['used_at'])) {
+            Response::ok([
+                'verified' => true,
+                'alreadyVerified' => true,
+            ]);
+            return;
+        }
+
+        $expiresAt = strtotime((string)$row['expires_at']);
+        if ($expiresAt <= 0 || $expiresAt < time()) {
+            throw new HttpException(400, 'TOKEN_EXPIRED', [], 'Verification link expired');
+        }
+
+        $userId = (int)$row['user_id'];
+
+        $userRepo = new UserRepository();
+        $user = $userRepo->findById($userId);
+        if (!$user) {
+            throw new HttpException(400, 'INVALID_TOKEN', [], 'Invalid verification link');
+        }
+
+        // Déjà vérifié ?
+        if (!empty($user['email_verified_at'])) {
+            $verifyRepo->markUsed($userId);
+            Response::ok([
+                'verified' => true,
+                'alreadyVerified' => true,
+            ]);
+            return;
+        }
+
+        // ✅ Marque vérifié + token utilisé
+        $userRepo->markEmailVerified($userId);
+        $verifyRepo->markUsed($userId);
+
+        Response::ok([
+            'verified' => true,
+            'alreadyVerified' => false,
+        ]);
+    }
+
+    /**
+     * POST /v1/auth/resend-verification
+     * Body: { "email": "..." }
+     *
+     * Réponse volontairement générique (anti-enumération)
+     */
+    public function resendVerification(): void
+    {
+        $body = Request::json();
+        $email = trim((string)($body['email'] ?? ''));
+
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            // réponse générique volontaire
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        $userRepo = new UserRepository();
+        $user = $userRepo->findByEmail($email);
+
+        if (!$user) {
+            // anti-enumération
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        // déjà vérifié => ok
+        if (!empty($user['email_verified_at'])) {
+            Response::ok(['sent' => true, 'alreadyVerified' => true]);
+            return;
+        }
+
+        $userId = (int)$user['id'];
+        $verifyRepo = new EmailVerificationRepository();
+
+        // cooldown simple (anti spam)
+        if (!$verifyRepo->canResend($userId, 60)) {
+            throw new HttpException(429, 'TOO_MANY_REQUESTS', [
+                'retryAfter' => 60,
+            ], 'Please wait before resending');
+        }
+
+        $this->sendVerificationEmail($userId, $email);
+
+        Response::ok(['sent' => true]);
+    }
+
+    /**
      * Refresh access token (rotation refresh token)
-     * Body: { "refreshToken": "..." }
      */
     public function refresh(): void
     {
@@ -138,7 +265,6 @@ final class AuthController
             throw new HttpException(401, 'INVALID_REFRESH', [], 'Invalid refresh token');
         }
 
-        // Rotation : on révoque l'ancien, on émet un nouveau
         $refreshRepo->revoke($refreshToken);
 
         [$accessToken, $newRefreshToken] = $this->issueTokens($userId);
@@ -153,10 +279,6 @@ final class AuthController
         ]);
     }
 
-    /**
-     * Logout = revoke refresh token
-     * Body: { "refreshToken": "..." }
-     */
     public function logout(): void
     {
         $body = Request::json();
@@ -190,10 +312,6 @@ final class AuthController
         ]);
     }
 
-    /**
-     * (Optionnel) logout global de tous les appareils
-     * - utile pour "Déconnexion partout"
-     */
     public function logoutAll(): void
     {
         $uid = Auth::requireAuth();
@@ -204,7 +322,37 @@ final class AuthController
         Response::ok(['loggedOutAll' => true, 'revoked' => $count]);
     }
 
-    // -------------------- Helpers --------------------
+    // -------------------- Email verification helpers --------------------
+
+    private function sendVerificationEmail(int $userId, string $email): void
+    {
+        $ttl = (int)Env::get('EMAIL_VERIFY_TTL', '3600');
+
+        $rawToken = bin2hex(random_bytes(32)); // 64 chars
+        $tokenHash = hash('sha256', $rawToken);
+
+        $verifyRepo = new EmailVerificationRepository();
+        $verifyRepo->upsertTokenForUser($userId, $tokenHash, $ttl);
+
+        $appUrl = rtrim(Env::get('APP_URL', 'http://localhost:8080'), '/');
+        $verifyUrl = $appUrl . "/v1/auth/verify-email?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
+
+        $subject = "Confirme ton email - Bookly";
+        $html = "
+            <div style=\"font-family:Arial,sans-serif;line-height:1.4\">
+              <h2>Confirme ton email</h2>
+              <p>Bienvenue sur Bookly 👋</p>
+              <p>Clique sur ce bouton pour confirmer ton adresse email :</p>
+              <p><a href=\"{$verifyUrl}\" style=\"display:inline-block;padding:12px 16px;text-decoration:none;border-radius:10px;background:#111827;color:#fff\">Confirmer mon email</a></p>
+              <p style=\"color:#6b7280;font-size:12px\">Si le bouton ne marche pas, copie/colle ce lien :</p>
+              <p style=\"color:#6b7280;font-size:12px\">{$verifyUrl}</p>
+            </div>
+        ";
+
+        Mailer::send($email, $subject, $html);
+    }
+
+    // -------------------- JWT helpers --------------------
 
     private function issueTokens(int $userId): array
     {
@@ -229,7 +377,6 @@ final class AuthController
         }
 
         $now = time();
-
         $payload = [
             'iss' => 'bookly-api',
             'sub' => $userId,
@@ -242,7 +389,6 @@ final class AuthController
 
     private function issueRefreshToken(): string
     {
-        // 64 chars hex
         return bin2hex(random_bytes(32));
     }
 
@@ -253,6 +399,8 @@ final class AuthController
         $goal = isset($u['goal_pages_per_day']) ? (int)$u['goal_pages_per_day'] : 20;
         $lang = isset($u['language']) ? (string)$u['language'] : 'FR';
         $density = isset($u['density']) ? (string)$u['density'] : 'Comfort';
+
+        $isVerified = !empty($u['email_verified_at']);
 
         $progress = [
             'xp' => (int)($u['xp'] ?? 0),
@@ -275,6 +423,9 @@ final class AuthController
             'firstName' => (string)($u['first_name'] ?? ''),
             'lastName' => (string)($u['last_name'] ?? ''),
             'bio' => $u['bio'] ?? null,
+
+            'emailVerified' => $isVerified,
+            'emailVerifiedAt' => $u['email_verified_at'] ?? null,
 
             'progress' => $progress,
 
