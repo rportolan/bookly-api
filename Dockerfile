@@ -3,18 +3,15 @@ FROM php:8.3-apache
 # --- Apache modules ---
 RUN a2enmod rewrite headers
 
-# --- System deps for Composer + PHP zip extension ---
-# Needed for: composer prefer-dist (zip/unzip) and fallback source (git)
+# --- System deps + PHP extensions (zip, curl, pdo_mysql) ---
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
     zip \
     libzip-dev \
-  && docker-php-ext-install zip \
+    libcurl4-openssl-dev \
+  && docker-php-ext-install zip curl pdo pdo_mysql \
   && rm -rf /var/lib/apt/lists/*
-
-# --- PHP extensions ---
-RUN docker-php-ext-install pdo pdo_mysql
 
 # --- Send PHP errors to Railway logs (stderr) ---
 RUN { \
@@ -43,13 +40,11 @@ RUN composer install \
   --no-progress \
   --optimize-autoloader
 
-# Sanity: vendor autoload must exist
 RUN test -f /var/www/html/vendor/autoload.php
 
 # Copy app
 COPY . .
 
-# Sanity: public index must exist
 RUN test -f /var/www/html/public/index.php
 
 # Start script
