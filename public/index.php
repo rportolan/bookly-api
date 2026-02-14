@@ -19,6 +19,7 @@ use App\Controllers\QuestsController;
 use App\Controllers\ReadingController;
 use App\Controllers\LearnController;
 use App\Controllers\DashboardController;
+use App\Controllers\GoogleBooksController;
 
 /**
  * Bootstrap env
@@ -139,6 +140,7 @@ $chapters   = new ChaptersController();
 $quests     = new QuestsController();
 $reading    = new ReadingController();
 $learn      = new LearnController();
+$gbooks     = new GoogleBooksController();
 
 /**
  * API prefix
@@ -156,7 +158,7 @@ $router->add('GET',  "{$prefix}/me",            fn() => $auth->me());
 $router->add('POST', "{$prefix}/auth/refresh",  fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 
-// ✅ Email verification (new)
+// ✅ Email verification
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
 $router->add('POST', "{$prefix}/auth/resend-verification", fn() => $auth->resendVerification());
 
@@ -175,6 +177,10 @@ $router->add('GET',    "{$prefix}/books/{id:\d+}",      fn($p) => $books->show($
 $router->add('PATCH',  "{$prefix}/books/{id:\d+}",      fn($p) => $books->update($p));
 $router->add('DELETE', "{$prefix}/books/{id:\d+}",      fn($p) => $books->destroy($p));
 $router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress", fn($p) => $books->updateProgress($p));
+
+// ✅ Google Books (proxy + cache + import)
+$router->add('GET',  "{$prefix}/google-books/search", fn() => $gbooks->search());
+$router->add('POST', "{$prefix}/google-books/import", fn() => $gbooks->import());
 
 // Quotes
 $router->add('GET',    "{$prefix}/books/{id}/quotes",            fn($p) => $quotes->index($p));
