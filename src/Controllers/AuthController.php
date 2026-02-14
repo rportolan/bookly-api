@@ -12,12 +12,18 @@ use App\Core\Jwt;
 use App\Core\Mailer;
 
 use App\Repositories\EmailVerificationRepository;
+use App\Repositories\PasswordResetRepository;
 use App\Repositories\RefreshTokenRepository;
 use App\Repositories\UserRepository;
+
 use App\Services\ProgressService;
 
 final class AuthController
 {
+    /* ============================================================
+       REGISTER / LOGIN
+    ============================================================ */
+
     public function register(): void
     {
         $body = Request::json();
@@ -54,7 +60,6 @@ final class AuthController
             throw new HttpException(409, 'CONFLICT', ['field' => 'username'], 'Username already used');
         }
 
-        // ✅ Mieux que PASSWORD_DEFAULT : ARGON2ID si dispo
         $algo = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
         $hash = password_hash($password, $algo);
 
@@ -70,7 +75,7 @@ final class AuthController
             throw new HttpException(500, 'SERVER_ERROR', [], 'User not found after register');
         }
 
-        // ✅ Crée token + envoie email
+        // send verification email
         $this->sendVerificationEmail((int)$userId, $email);
 
         Response::created([
@@ -107,7 +112,6 @@ final class AuthController
             throw new HttpException(401, 'UNAUTHORIZED', [], 'Invalid credentials');
         }
 
-        // ✅ Bloque tant que email non vérifié
         if (empty($user['email_verified_at'])) {
             throw new HttpException(403, 'EMAIL_NOT_VERIFIED', [
                 'action' => 'resend_verification',
@@ -127,6 +131,10 @@ final class AuthController
         ]);
     }
 
+    /* ============================================================
+       EMAIL VERIFICATION
+    ============================================================ */
+
     /**
      * GET /v1/auth/verify-email?email=...&token=...
      */
@@ -136,15 +144,13 @@ final class AuthController
         $token = trim((string)($_GET['token'] ?? ''));
 
         if ($email === '' || $token === '') {
-            throw new HttpException(422, 'VALIDATION_ERROR', [
-                'required' => ['email', 'token'],
-            ], 'Missing required fields');
+            $this->renderSimpleHtml("Lien invalide.", false, "Bookly - Vérification");
+            return;
         }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            throw new HttpException(422, 'VALIDATION_ERROR', [
-                'field' => 'email',
-            ], 'Invalid email');
+            $this->renderSimpleHtml("Adresse email invalide.", false, "Bookly - Vérification");
+            return;
         }
 
         $tokenHash = hash('sha256', $token);
@@ -153,55 +159,33 @@ final class AuthController
         $row = $verifyRepo->findValidByEmailAndTokenHash($email, $tokenHash);
 
         if (!$row) {
-            throw new HttpException(400, 'INVALID_TOKEN', [], 'Invalid verification link');
+            $this->renderSimpleHtml("Lien invalide ou expiré.", false, "Bookly - Vérification");
+            return;
         }
 
         if (!empty($row['used_at'])) {
-            Response::ok([
-                'verified' => true,
-                'alreadyVerified' => true,
-            ]);
+            $this->renderSimpleHtml("Ton email est déjà vérifié.", true, "Bookly - Vérification");
             return;
         }
 
         $expiresAt = strtotime((string)$row['expires_at']);
         if ($expiresAt <= 0 || $expiresAt < time()) {
-            throw new HttpException(400, 'TOKEN_EXPIRED', [], 'Verification link expired');
+            $this->renderSimpleHtml("Lien expiré.", false, "Bookly - Vérification");
+            return;
         }
 
         $userId = (int)$row['user_id'];
 
         $userRepo = new UserRepository();
-        $user = $userRepo->findById($userId);
-        if (!$user) {
-            throw new HttpException(400, 'INVALID_TOKEN', [], 'Invalid verification link');
-        }
-
-        // Déjà vérifié ?
-        if (!empty($user['email_verified_at'])) {
-            $verifyRepo->markUsed($userId);
-            Response::ok([
-                'verified' => true,
-                'alreadyVerified' => true,
-            ]);
-            return;
-        }
-
-        // ✅ Marque vérifié + token utilisé
         $userRepo->markEmailVerified($userId);
         $verifyRepo->markUsed($userId);
 
-        Response::ok([
-            'verified' => true,
-            'alreadyVerified' => false,
-        ]);
+        $this->renderSimpleHtml("Email vérifié avec succès ! 🎉", true, "Bookly - Vérification");
     }
 
     /**
      * POST /v1/auth/resend-verification
      * Body: { "email": "..." }
-     *
-     * Réponse volontairement générique (anti-enumération)
      */
     public function resendVerification(): void
     {
@@ -209,7 +193,6 @@ final class AuthController
         $email = trim((string)($body['email'] ?? ''));
 
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            // réponse générique volontaire
             Response::ok(['sent' => true]);
             return;
         }
@@ -218,12 +201,10 @@ final class AuthController
         $user = $userRepo->findByEmail($email);
 
         if (!$user) {
-            // anti-enumération
             Response::ok(['sent' => true]);
             return;
         }
 
-        // déjà vérifié => ok
         if (!empty($user['email_verified_at'])) {
             Response::ok(['sent' => true, 'alreadyVerified' => true]);
             return;
@@ -232,7 +213,6 @@ final class AuthController
         $userId = (int)$user['id'];
         $verifyRepo = new EmailVerificationRepository();
 
-        // cooldown simple (anti spam)
         if (!$verifyRepo->canResend($userId, 60)) {
             throw new HttpException(429, 'TOO_MANY_REQUESTS', [
                 'retryAfter' => 60,
@@ -244,9 +224,225 @@ final class AuthController
         Response::ok(['sent' => true]);
     }
 
+    /* ============================================================
+       FORGOT PASSWORD / RESET PASSWORD
+    ============================================================ */
+
     /**
-     * Refresh access token (rotation refresh token)
+     * POST /v1/auth/forgot-password
+     * Body: { "email": "..." }
+     * Réponse générique (anti-enumération)
      */
+    public function forgotPassword(): void
+    {
+        $body = Request::json();
+        $email = trim((string)($body['email'] ?? ''));
+
+        // anti-enumération
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        $userRepo = new UserRepository();
+        $user = $userRepo->findByEmail($email);
+
+        if (!$user) {
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        $userId = (int)$user['id'];
+        $resetRepo = new PasswordResetRepository();
+
+        $cooldown = (int)Env::get('PASSWORD_RESET_COOLDOWN', '60');
+        if (!$resetRepo->canResend($userId, $cooldown)) {
+            throw new HttpException(429, 'TOO_MANY_REQUESTS', [
+                'retryAfter' => $cooldown,
+            ], 'Please wait before resending');
+        }
+
+        $this->sendPasswordResetEmail($userId, $email);
+
+        Response::ok(['sent' => true]);
+    }
+
+    /**
+     * GET /v1/auth/reset-password?email=...&token=...
+     * Fallback HTML form (GET ONLY)
+     */
+    public function resetPasswordHtml(): void
+    {
+        $email = trim((string)($_GET['email'] ?? ''));
+        $token = trim((string)($_GET['token'] ?? ''));
+
+        header('Content-Type: text/html; charset=utf-8');
+
+        if ($email === '' || $token === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            echo $this->resetHtmlPage("Lien invalide.", false, false, $email, $token);
+            return;
+        }
+
+        echo $this->resetHtmlPage("Choisis un nouveau mot de passe.", true, true, $email, $token);
+    }
+
+    /**
+     * POST /v1/auth/reset-password
+     * - Mobile => JSON: { email, token, newPassword }
+     * - HTML   => FORM: email, token, new_password
+     */
+    public function resetPassword(): void
+    {
+        $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+        $isJson = str_contains($contentType, 'application/json');
+
+        if ($isJson) {
+            $body = Request::json();
+
+            $email = trim((string)($body['email'] ?? ''));
+            $token = trim((string)($body['token'] ?? ''));
+            $newPassword = (string)($body['newPassword'] ?? '');
+
+            $this->resetPasswordCore($email, $token, $newPassword);
+
+            Response::ok(['reset' => true]);
+            return;
+        }
+
+        // HTML form submit
+        $email = trim((string)($_POST['email'] ?? ''));
+        $token = trim((string)($_POST['token'] ?? ''));
+        $newPassword = (string)($_POST['new_password'] ?? '');
+
+        header('Content-Type: text/html; charset=utf-8');
+
+        try {
+            $this->resetPasswordCore($email, $token, $newPassword);
+            echo $this->resetHtmlPage("Mot de passe mis à jour ✅ Tu peux te reconnecter.", true, false, $email, $token);
+            return;
+        } catch (\Throwable $e) {
+            $msg = "Lien invalide ou expiré.";
+            if ($e instanceof HttpException) {
+                $msg = match ($e->errorCode) {
+                    'RESET_EXPIRED' => "Lien expiré.",
+                    'RESET_ALREADY_USED' => "Lien déjà utilisé.",
+                    'VALIDATION_ERROR' => "Mot de passe invalide (min 8).",
+                    default => "Lien invalide ou expiré.",
+                };
+            }
+            echo $this->resetHtmlPage($msg, false, true, $email, $token);
+            return;
+        }
+    }
+
+    private function resetPasswordCore(string $email, string $token, string $newPassword): void
+    {
+        if ($email === '' || $token === '' || $newPassword === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'required' => ['email', 'token', 'newPassword'],
+            ], 'Missing required fields');
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'email'], 'Invalid email');
+        }
+
+        if (strlen($newPassword) < 8) {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'field' => 'newPassword',
+                'min' => 8,
+            ], 'Password too short');
+        }
+
+        $tokenHash = hash('sha256', $token);
+
+        $resetRepo = new PasswordResetRepository();
+        $row = $resetRepo->findValidByEmailAndTokenHash($email, $tokenHash);
+
+        if (!$row) {
+            throw new HttpException(400, 'INVALID_RESET_LINK', [], 'Invalid or expired link');
+        }
+
+        if (!empty($row['used_at'])) {
+            throw new HttpException(400, 'RESET_ALREADY_USED', [], 'Link already used');
+        }
+
+        $expiresAt = strtotime((string)$row['expires_at']);
+        if ($expiresAt <= 0 || $expiresAt < time()) {
+            throw new HttpException(400, 'RESET_EXPIRED', [], 'Link expired');
+        }
+
+        $userId = (int)$row['user_id'];
+
+        $algo = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
+        $hash = password_hash($newPassword, $algo);
+
+        $userRepo = new UserRepository();
+        $userRepo->updatePasswordHash($userId, $hash);
+
+        $resetRepo->markUsed($userId);
+
+        $rt = new RefreshTokenRepository();
+        $rt->revokeAllForUser($userId);
+    }
+
+    private function resetHtmlPage(
+        string $message,
+        bool $ok,
+        bool $showForm,
+        string $email = '',
+        string $token = ''
+    ): string {
+        $color = $ok ? "#16a34a" : "#dc2626";
+        $safeEmail = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
+        $safeToken = htmlspecialchars($token, ENT_QUOTES, 'UTF-8');
+
+        $form = $showForm ? "
+          <form method='POST' action='/v1/auth/reset-password' style='margin-top:18px;display:flex;flex-direction:column;gap:10px;'>
+            <input type='hidden' name='email' value='{$safeEmail}' />
+            <input type='hidden' name='token' value='{$safeToken}' />
+
+            <input type='password' name='new_password' placeholder='Nouveau mot de passe (min 8)'
+              style='padding:12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:#fff' />
+
+            <button type='submit'
+              style='padding:12px;border-radius:12px;border:1px solid #374151;background:#111827;color:#fff;font-weight:800'>
+              Mettre à jour
+            </button>
+
+            <p style='margin-top:10px;color:#9ca3af;font-size:12px'>
+              Email: {$safeEmail}
+            </p>
+          </form>
+        " : "
+          <p style='margin-top:16px;color:#9ca3af;'>Retourne dans l’app et connecte-toi.</p>
+        ";
+
+        return "
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset='UTF-8'>
+          <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+          <title>Bookly - Reset password</title>
+        </head>
+        <body style='margin:0;font-family:Arial;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;'>
+          <div style='text-align:center;padding:24px;max-width:420px;'>
+            <h1 style='color:$color;'>$message</h1>
+            $form
+            <p style='margin-top:18px;font-size:12px;color:#6b7280;'>
+              Si tu n’es pas à l’origine de cette demande, tu peux ignorer cette page.
+            </p>
+          </div>
+        </body>
+        </html>
+        ";
+    }
+
+    /* ============================================================
+       REFRESH / LOGOUT / ME
+    ============================================================ */
+
     public function refresh(): void
     {
         $body = Request::json();
@@ -322,19 +518,21 @@ final class AuthController
         Response::ok(['loggedOutAll' => true, 'revoked' => $count]);
     }
 
-    // -------------------- Email verification helpers --------------------
+    /* ============================================================
+       HELPERS: MAILS
+    ============================================================ */
 
     private function sendVerificationEmail(int $userId, string $email): void
     {
         $ttl = (int)Env::get('EMAIL_VERIFY_TTL', '3600');
 
-        $rawToken = bin2hex(random_bytes(32)); // 64 chars
+        $rawToken = bin2hex(random_bytes(32));
         $tokenHash = hash('sha256', $rawToken);
 
         $verifyRepo = new EmailVerificationRepository();
         $verifyRepo->upsertTokenForUser($userId, $tokenHash, $ttl);
 
-        $appUrl = rtrim(Env::get('APP_URL', 'http://localhost:8080'), '/');
+        $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
         $verifyUrl = $appUrl . "/v1/auth/verify-email?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
 
         $subject = "Confirme ton email - Bookly";
@@ -352,7 +550,71 @@ final class AuthController
         Mailer::send($email, $subject, $html);
     }
 
-    // -------------------- JWT helpers --------------------
+    private function sendPasswordResetEmail(int $userId, string $email): void
+    {
+        $ttl = (int)Env::get('PASSWORD_RESET_TTL', '3600');
+
+        $rawToken = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $rawToken);
+
+        $resetRepo = new PasswordResetRepository();
+        $resetRepo->upsertTokenForUser($userId, $tokenHash, $ttl);
+
+        $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
+        $resetUrl = $appUrl . "/v1/auth/reset-password?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
+
+        $subject = "Réinitialise ton mot de passe - Bookly";
+        $html = "
+            <div style=\"font-family:Arial,sans-serif;line-height:1.4\">
+              <h2>Réinitialisation du mot de passe</h2>
+              <p>Tu as demandé à réinitialiser ton mot de passe.</p>
+              <p><a href=\"{$resetUrl}\" style=\"display:inline-block;padding:12px 16px;text-decoration:none;border-radius:10px;background:#111827;color:#fff\">Réinitialiser</a></p>
+              <p style=\"color:#6b7280;font-size:12px\">Si tu n’es pas à l’origine de la demande, ignore cet email.</p>
+              <p style=\"color:#6b7280;font-size:12px\">Lien (si le bouton ne marche pas) :</p>
+              <p style=\"color:#6b7280;font-size:12px\">{$resetUrl}</p>
+            </div>
+        ";
+
+        Mailer::send($email, $subject, $html);
+    }
+
+    /* ============================================================
+       HELPERS: HTML RENDER
+    ============================================================ */
+
+    private function renderSimpleHtml(string $message, bool $success, string $title): void
+    {
+        header('Content-Type: text/html; charset=utf-8');
+
+        $color = $success ? "#16a34a" : "#dc2626";
+        $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+
+        echo "
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset='UTF-8'>
+            <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+            <title>{$safeTitle}</title>
+        </head>
+        <body style='margin:0;font-family:Arial;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;'>
+            <div style='text-align:center;padding:24px;max-width:420px;'>
+                <h1 style='color:$color;'>$message</h1>
+                <p style='color:#9ca3af;margin-top:16px;'>
+                    Tu peux maintenant retourner dans l'application et te connecter.
+                </p>
+                <p style='margin-top:24px;font-size:12px;color:#6b7280;'>
+                    Si l'application ne s'ouvre pas automatiquement, retourne simplement à Bookly.
+                </p>
+            </div>
+        </body>
+        </html>
+        ";
+    }
+
+    /* ============================================================
+       JWT HELPERS
+    ============================================================ */
 
     private function issueTokens(int $userId): array
     {
@@ -369,7 +631,7 @@ final class AuthController
 
     private function issueAccessToken(int $userId): string
     {
-        $secret = Env::get('JWT_SECRET', '');
+        $secret = (string)Env::get('JWT_SECRET', '');
         $ttl = (int)Env::get('JWT_ACCESS_TTL', '900');
 
         if ($secret === '') {
@@ -391,6 +653,10 @@ final class AuthController
     {
         return bin2hex(random_bytes(32));
     }
+
+    /* ============================================================
+       PUBLIC USER
+    ============================================================ */
 
     private function publicUser(?array $u): array
     {
