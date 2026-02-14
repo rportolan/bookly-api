@@ -160,6 +160,14 @@ $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
 $router->add('POST', "{$prefix}/auth/resend-verification", fn() => $auth->resendVerification());
 
+// Password reset (new)
+$router->add('POST', "{$prefix}/auth/forgot-password", fn() => $auth->forgotPassword());
+$router->add('POST', "{$prefix}/auth/reset-password", fn() => $auth->resetPassword());
+
+// Fallback HTML (new) : lien cliquable depuis email
+$router->add('GET',  "{$prefix}/auth/reset-password", fn() => $auth->resetPasswordHtml());
+
+
 // Dashboard
 $router->add('GET', "{$prefix}/dashboard/continue", fn() => $dashboard->continue());
 

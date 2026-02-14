@@ -153,4 +153,7 @@ final class UserRepository
         $stmt = $pdo->prepare("DELETE FROM users WHERE id = :id LIMIT 1");
         $stmt->execute(['id' => $id]);
     }
+
+   
+
 }
