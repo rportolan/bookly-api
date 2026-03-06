@@ -8,6 +8,8 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\ReadingRepository;
+use App\Repositories\ProgressRepository;
+use App\Services\CardService;
 use App\Services\ProgressService;
 
 final class ReadingController
@@ -66,7 +68,6 @@ final class ReadingController
             throw new HttpException(422, 'VALIDATION_ERROR', ['fields' => ['from', 'to']], 'Invalid date range');
         }
 
-        // garde-fou (si from > to)
         if ($from > $to) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['fields' => ['from', 'to']], 'from must be <= to');
         }
@@ -93,44 +94,69 @@ final class ReadingController
 
         $today = (new \DateTimeImmutable('today'))->format('Y-m-d');
 
-        // 1) previous pages
         $beforeRow = $this->repo->getLogByDay($userId, $today);
         $beforePages = (int)($beforeRow['pages'] ?? 0);
 
-        // 2) goal
         $goal = (int)$this->repo->getGoalPagesPerDay($userId);
 
-        // 3) save new value
         $this->repo->upsertLog($userId, $today, $pages);
 
-        // 4) reward XP once when crossing threshold
-        $crossed = ($goal > 0 && $beforePages < $goal && $pages >= $goal);
+        $crossedGoal = ($goal > 0 && $beforePages < $goal && $pages >= $goal);
 
-        $rewarded = false;
-        $progress = null;
+        $rewardedGoal = false;
+        $progressGoal = null;
 
-        if ($crossed && !$this->repo->hasDailyGoalXp($userId, $today)) {
-            $xp = 10; // ajuste quand tu veux
-
+        // ✅ daily goal XP (idempotent via existing method)
+        if ($crossedGoal && !$this->repo->hasDailyGoalXp($userId, $today)) {
             try {
                 $ps = new ProgressService();
-                $progress = $ps->award($userId, 'daily_goal_completed', $xp, [
+                $progressGoal = $ps->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
                     'day' => $today,
                     'goal' => $goal,
                     'pages' => $pages,
                 ]);
-                $rewarded = true;
+                $rewardedGoal = true;
             } catch (\Throwable $e) {
-                error_log('[BOOKLY][XP] award daily_goal_completed failed: ' . $e->getMessage());
+                error_log('[BOOKLY][XP] award DAILY_GOAL_COMPLETED failed: ' . $e->getMessage());
             }
+        }
+
+        // ✅ streak XP: once per day if pages>0
+        $rewardedStreak = false;
+        $streakDays = $this->repo->computeCurrentStreakDays($userId);
+
+        if ($pages > 0) {
+            try {
+                $pr = new ProgressRepository();
+                $already = $pr->hasEventMeta($userId, 'STREAK_DAY', 'day', $today);
+                if (!$already) {
+                    (new ProgressService())->award($userId, 'STREAK_DAY', 0, [
+                        'day' => $today,
+                        'pages' => $pages,
+                        'streakDays' => $streakDays,
+                    ]);
+                    $rewardedStreak = true;
+                }
+            } catch (\Throwable $e) {
+                error_log('[BOOKLY][XP] award STREAK_DAY failed: ' . $e->getMessage());
+            }
+        }
+
+        // 🔥 IMPORTANT: check unlocks even if NO XP was awarded
+        try {
+            (new CardService())->checkUnlocks($userId);
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][cards] checkUnlocks failed: ' . $e->getMessage());
         }
 
         Response::ok([
             'entry' => ['date' => $today, 'pages' => $pages],
             'goalPagesPerDay' => $goal,
-            'crossedGoalToday' => $crossed,
-            'rewardedToday' => $rewarded,
-            'progress' => $progress, // null si pas de reward
+            'crossedGoalToday' => $crossedGoal,
+            'rewardedDailyGoal' => $rewardedGoal,
+            'rewardedStreakDay' => $rewardedStreak,
+            'streakDays' => $streakDays,
+            'progress' => $progressGoal, // null si pas de reward daily goal
         ]);
     }
 

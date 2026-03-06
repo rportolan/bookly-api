@@ -32,9 +32,6 @@ final class ReadingRepository
         ]);
     }
 
-    /**
-     * Return entries as [{date:'YYYY-MM-DD', pages:int}]
-     */
     public function getLogsInRange(int $userId, string $from, string $to): array
     {
         $stmt = $this->pdo->prepare("
@@ -82,10 +79,6 @@ final class ReadingRepository
         return $row ?: null;
     }
 
-    /**
-     * Vérifie si on a déjà donné l'XP de "daily_goal_completed" pour ce jour.
-     * meta = {"day":"YYYY-MM-DD", ...}
-     */
     public function hasDailyGoalXp(int $userId, string $day): bool
     {
         $sql = "
@@ -99,10 +92,41 @@ final class ReadingRepository
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             'uid' => $userId,
-            'type' => 'daily_goal_completed',
+            'type' => 'DAILY_GOAL_COMPLETED',
             'day' => $day,
         ]);
 
         return (bool)$stmt->fetchColumn();
+    }
+
+    /**
+     * Current streak: consecutive days up to today where pages > 0.
+     */
+    public function computeCurrentStreakDays(int $userId): int
+    {
+        $today = new \DateTimeImmutable('today');
+        $streak = 0;
+
+        for ($i = 0; $i < 2000; $i++) {
+            $day = $today->sub(new \DateInterval('P' . $i . 'D'))->format('Y-m-d');
+
+            $stmt = $this->pdo->prepare("
+                SELECT pages
+                FROM reading_logs
+                WHERE user_id = :uid AND day = :day
+                LIMIT 1
+            ");
+            $stmt->execute(['uid' => $userId, 'day' => $day]);
+            $pages = (int)($stmt->fetchColumn() ?: 0);
+
+            if ($pages > 0) {
+                $streak++;
+                continue;
+            }
+
+            break;
+        }
+
+        return $streak;
     }
 }

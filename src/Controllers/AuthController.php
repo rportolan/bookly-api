@@ -91,17 +91,21 @@ final class AuthController
     {
         $body = Request::json();
 
-        $username = trim((string)($body['username'] ?? ''));
+        $identifier = trim((string)($body['username'] ?? $body['identifier'] ?? ''));
         $password = (string)($body['password'] ?? '');
 
-        if ($username === '' || $password === '') {
+        if ($identifier === '' || $password === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', [
                 'required' => ['username', 'password'],
             ], 'Missing required fields');
         }
 
         $repo = new UserRepository();
-        $user = $repo->findByUsername($username);
+
+        // ✅ allow username OR email
+        $user = str_contains($identifier, '@')
+            ? $repo->findByEmail($identifier)
+            : $repo->findByUsername($identifier);
 
         if (!$user) {
             throw new HttpException(401, 'UNAUTHORIZED', [], 'Invalid credentials');
@@ -115,6 +119,7 @@ final class AuthController
         if (empty($user['email_verified_at'])) {
             throw new HttpException(403, 'EMAIL_NOT_VERIFIED', [
                 'action' => 'resend_verification',
+                'email' => (string)($user['email'] ?? ''), // ✅ allow front to prefill
             ], 'Email not verified');
         }
 

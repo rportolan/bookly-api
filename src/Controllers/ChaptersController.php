@@ -8,6 +8,7 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\ChaptersRepository;
+use App\Services\ProgressService;
 
 final class ChaptersController
 {
@@ -53,8 +54,17 @@ final class ChaptersController
         try {
             $row = $repo->create($userId, $bookId, $title, $resume, $observation, $position);
         } catch (\RuntimeException $e) {
-            // ton repo throw "Not Found" si user_book n'appartient pas au user
             throw new HttpException(404, 'NOT_FOUND', ['bookId' => $bookId], 'Not Found');
+        }
+
+        // ✅ XP + unlock cards
+        try {
+            (new ProgressService())->award($userId, 'CHAPTER_ADDED', 0, [
+                'userBookId' => $bookId,
+                'chapterId' => (int)($row['id'] ?? 0),
+            ]);
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][XP] award CHAPTER_ADDED failed: ' . $e->getMessage());
         }
 
         Response::created($this->mapRow($row));

@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 namespace App\Repositories;
 
 use App\Core\Db;
@@ -9,57 +11,71 @@ final class QuestRepository
     {
         $pdo = Db::pdo();
 
-        // total / done / reading / pagesRead depuis user_books
+        // Books finished + pages read (progress pages sum)
         $stmt = $pdo->prepare("
             SELECT
-              COUNT(*) AS total,
-              SUM(CASE WHEN status = 'Terminé' THEN 1 ELSE 0 END) AS done,
-              SUM(CASE WHEN status = 'En cours' THEN 1 ELSE 0 END) AS reading,
-              COALESCE(SUM(progress_pages), 0) AS pagesRead
-            FROM user_books
-            WHERE user_id = :uid
-        ");
-        $stmt->execute(['uid' => $userId]);
-        $row = $stmt->fetch() ?: [];
-
-        // vocab count
-        $stmt = $pdo->prepare("
-            SELECT COALESCE(COUNT(v.id), 0) AS vocab
-            FROM vocab v
-            JOIN user_books ub ON ub.id = v.user_book_id
+              SUM(CASE WHEN ub.status = 'Terminé' THEN 1 ELSE 0 END) AS done,
+              SUM(ub.progress_pages) AS pages_read,
+              COUNT(*) AS books_created,
+              SUM(CASE WHEN ub.analysis_work IS NOT NULL AND TRIM(ub.analysis_work) <> '' THEN 1 ELSE 0 END) AS analyses_added
+            FROM user_books ub
             WHERE ub.user_id = :uid
         ");
         $stmt->execute(['uid' => $userId]);
-        $vRow = $stmt->fetch() ?: [];
+        $books = $stmt->fetch() ?: [];
 
-        // quotes count
+        // Quotes count
         $stmt = $pdo->prepare("
-            SELECT COALESCE(COUNT(q.id), 0) AS quotes
+            SELECT COUNT(*) AS quotes
             FROM quotes q
             JOIN user_books ub ON ub.id = q.user_book_id
             WHERE ub.user_id = :uid
         ");
         $stmt->execute(['uid' => $userId]);
-        $qRow = $stmt->fetch() ?: [];
+        $quotes = (int)($stmt->fetchColumn() ?: 0);
 
-        // chapters count
+        // Vocab count
         $stmt = $pdo->prepare("
-            SELECT COALESCE(COUNT(c.id), 0) AS chapters
+            SELECT COUNT(*) AS vocab
+            FROM vocab v
+            JOIN user_books ub ON ub.id = v.user_book_id
+            WHERE ub.user_id = :uid
+        ");
+        $stmt->execute(['uid' => $userId]);
+        $vocab = (int)($stmt->fetchColumn() ?: 0);
+
+        // Chapters count
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) AS chapters
             FROM chapters c
             JOIN user_books ub ON ub.id = c.user_book_id
             WHERE ub.user_id = :uid
         ");
         $stmt->execute(['uid' => $userId]);
-        $cRow = $stmt->fetch() ?: [];
+        $chapters = (int)($stmt->fetchColumn() ?: 0);
+
+        // Quizzes completed: count distinct quiz_id attempted
+        $stmt = $pdo->prepare("
+            SELECT COUNT(DISTINCT qa.quiz_id) AS quizzes_completed
+            FROM quiz_attempts qa
+            WHERE qa.user_id = :uid
+        ");
+        $stmt->execute(['uid' => $userId]);
+        $quizzesCompleted = (int)($stmt->fetchColumn() ?: 0);
+
+        // Streak days: computed from reading_logs
+        $streakDays = (new ReadingRepository())->computeCurrentStreakDays($userId);
 
         return [
-            'total' => (int)($row['total'] ?? 0),
-            'done' => (int)($row['done'] ?? 0),
-            'reading' => (int)($row['reading'] ?? 0),
-            'pagesRead' => (int)($row['pagesRead'] ?? 0),
-            'vocab' => (int)($vRow['vocab'] ?? 0),
-            'quotes' => (int)($qRow['quotes'] ?? 0),
-            'chapters' => (int)($cRow['chapters'] ?? 0),
+            'done' => (int)($books['done'] ?? 0),
+            'pagesRead' => (int)($books['pages_read'] ?? 0),
+            'booksCreated' => (int)($books['books_created'] ?? 0),
+            'analyses' => (int)($books['analyses_added'] ?? 0),
+            'quotes' => $quotes,
+            'vocab' => $vocab,
+            'chapters' => $chapters,
+            'streakDays' => $streakDays,
+            'quizzesCompleted' => $quizzesCompleted,
         ];
     }
 }

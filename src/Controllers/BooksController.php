@@ -8,6 +8,7 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\BookRepository;
+use App\Repositories\ProgressRepository;
 use App\Services\ProgressService;
 
 final class BooksController
@@ -64,10 +65,8 @@ final class BooksController
         $repo = new BookRepository();
         $row = $repo->createForUser($userId, $body);
 
-        // XP (MVP): on log l'erreur au lieu de casser la création du book
         try {
-            $progress = new ProgressService();
-            $progress->award($userId, 'BOOK_CREATED', 10, [
+            (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
                 'userBookId' => (int)($row['id'] ?? 0),
                 'bookId' => (int)($row['bookId'] ?? 0),
                 'title' => (string)($row['title'] ?? ''),
@@ -91,9 +90,36 @@ final class BooksController
         $body = Request::json();
         $repo = new BookRepository();
 
+        $before = $repo->findOneForUser($userId, $id);
+        if (!$before) {
+            throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
+        }
+
         $row = $repo->updateForUser($userId, $id, $body);
         if (!$row) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
+        }
+
+        // ✅ Award ANALYSIS_ADDED once per book when it becomes non-empty
+        try {
+            $beforeAnalysis = trim((string)($before['analysis_work'] ?? ''));
+            $afterAnalysis = trim((string)($row['analysis_work'] ?? ''));
+
+            $becameNonEmpty = ($beforeAnalysis === '' && $afterAnalysis !== '');
+            if ($becameNonEmpty) {
+                $pr = new ProgressRepository();
+                $already = $pr->hasEventMeta($userId, 'ANALYSIS_ADDED', 'userBookId', (int)$id);
+
+                if (!$already) {
+                    (new ProgressService())->award($userId, 'ANALYSIS_ADDED', 0, [
+                        'userBookId' => (int)$id,
+                        'bookId' => (int)($row['bookId'] ?? 0),
+                        'title' => (string)($row['title'] ?? ''),
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][XP] award ANALYSIS_ADDED failed: ' . $e->getMessage());
         }
 
         Response::ok($this->mapRow($row));
@@ -115,7 +141,6 @@ final class BooksController
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
         }
 
-        // 204 serait plus REST, mais ton front aime peut-être un JSON => on garde OK
         Response::ok(['deleted' => true]);
     }
 

@@ -4,12 +4,12 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Repositories\ProgressRepository;
-use App\Repositories\BadgeRepository;
 
 final class ProgressService
 {
     private array $levelThresholds = [
-        0, 100, 250, 450, 700, 1000, 1400, 1900, 2500, 3200, 4000, 5000, 6200, 7600, 9200,
+        0, 80, 180, 320, 500, 720, 980, 1280, 1620, 2000, 2450, 2950, 3500, 4100, 4750,
+        5450, 6200, 7000, 7850, 8750
     ];
 
     private array $titles = [
@@ -21,33 +21,44 @@ final class ProgressService
         ['minLevel' => 30, 'name' => 'Bibliophage'],
     ];
 
+    private array $xpRewards = [
+        'BOOK_CREATED' => 80,
+        'QUOTE_CREATED' => 25,
+        'VOCAB_CREATED' => 20,
+        'CHAPTER_ADDED' => 20,
+        'ANALYSIS_ADDED' => 60,
+        'LEARN_SESSION_DONE' => 60,
+        'PAGES_READ' => 2,
+        'BOOK_DONE' => 150,
+        'STREAK_DAY' => 40,
+        'QUIZ_COMPLETED' => 50,
+        'DAILY_GOAL_COMPLETED' => 10,
+    ];
+
     private ProgressRepository $progressRepo;
-    private BadgeRepository $badgeRepo;
 
     public function __construct()
     {
         $this->progressRepo = new ProgressRepository();
-        $this->badgeRepo = new BadgeRepository();
     }
 
-    /**
-     * Ajoute de l'XP + log event + badges, puis renvoie un snapshot complet.
-     */
-    public function award(int $userId, string $type, int $delta, array $meta = []): array
+    public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
-        $delta = (int)$delta;
         if ($delta === 0) {
+            $delta = $this->computeDeltaFromType($type, $meta);
+        }
+
+        if ($delta === 0) {
+            // même sans xp, on check les cartes (utile si certains triggers passent par award sans delta)
+            (new CardService())->checkUnlocks($userId);
             return $this->snapshot($userId);
         }
 
-        // 1) Log event
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
-
-        // 2) Update user xp
         $this->progressRepo->addXpToUser($userId, $delta);
 
-        // 3) Badges MVP
-        $this->checkAndUnlockBadgesMvp($userId, $type);
+        // 🔥 cartes
+        (new CardService())->checkUnlocks($userId);
 
         return $this->snapshot($userId);
     }
@@ -57,51 +68,60 @@ final class ProgressService
         $xp = $this->progressRepo->getUserXp($userId);
         $level = $this->computeLevel($xp);
         $title = $this->computeTitle($level);
-        $badges = $this->badgeRepo->listKeys($userId);
+
+        $minXp = $this->getLevelMinXp($level);
+        $nextMinXp = $this->getLevelMinXp($level + 1);
+
+        $xpThisLevel = max(0, $xp - $minXp);
+        $xpToNext = max(0, $nextMinXp - $xp);
+        $span = max(1, $nextMinXp - $minXp);
 
         return [
             'xp' => $xp,
             'level' => $level,
             'title' => $title,
-            'badges' => $badges,
+            'progressPct' => (int)round(($xpThisLevel / $span) * 100),
+            'xpToNext' => $xpToNext,
         ];
     }
 
-    public function computeLevel(int $xp): int
+    private function computeLevel(int $xp): int
     {
         $level = 1;
         foreach ($this->levelThresholds as $i => $minXp) {
-            if ($xp >= $minXp) $level = $i + 1;
+            if ($xp >= $minXp) {
+                $level = $i + 1;
+            }
         }
         return $level;
     }
 
-    public function computeTitle(int $level): string
+    private function computeTitle(int $level): string
     {
         $title = 'Lecteur novice';
         foreach ($this->titles as $t) {
-            if ($level >= (int)$t['minLevel']) {
-                $title = (string)$t['name'];
+            if ($level >= $t['minLevel']) {
+                $title = $t['name'];
             }
         }
         return $title;
     }
 
-    private function checkAndUnlockBadgesMvp(int $userId, string $type): void
+    private function getLevelMinXp(int $level): int
     {
-        switch ($type) {
-            case 'BOOK_CREATED':
-                $this->badgeRepo->unlock($userId, 'FIRST_BOOK');
-                break;
-            case 'QUOTE_CREATED':
-                $this->badgeRepo->unlock($userId, 'FIRST_QUOTE');
-                break;
-            case 'VOCAB_CREATED':
-                $this->badgeRepo->unlock($userId, 'FIRST_VOCAB');
-                break;
-            case 'LEARN_SESSION_DONE':
-                $this->badgeRepo->unlock($userId, 'FIRST_LEARN_SESSION');
-                break;
+        $idx = max(0, $level - 1);
+        return $this->levelThresholds[$idx] ?? (int)end($this->levelThresholds);
+    }
+
+    private function computeDeltaFromType(string $type, array $meta): int
+    {
+        $base = $this->xpRewards[$type] ?? 0;
+
+        if ($type === 'PAGES_READ') {
+            $pages = (int)($meta['pages'] ?? 0);
+            return $pages * max(1, (int)$base);
         }
+
+        return (int)$base;
     }
 }

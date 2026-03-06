@@ -20,6 +20,9 @@ use App\Controllers\ReadingController;
 use App\Controllers\LearnController;
 use App\Controllers\DashboardController;
 use App\Controllers\GoogleBooksController;
+use App\Controllers\CardsController;
+use App\Controllers\QuizController;
+use App\Controllers\DictionaryController;
 
 /**
  * Bootstrap env
@@ -141,6 +144,9 @@ $quests     = new QuestsController();
 $reading    = new ReadingController();
 $learn      = new LearnController();
 $gbooks     = new GoogleBooksController();
+$cards      = new CardsController();
+$quiz       = new QuizController();
+$dictionary = new DictionaryController();
 
 /**
  * API prefix
@@ -211,6 +217,10 @@ $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => 
 // Quests
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
 
+// Cards
+$router->add('GET',  "{$prefix}/cards", fn() => $cards->index());
+$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", fn($p) => $cards->claim($p));
+
 // Reading
 $router->add('GET',   "{$prefix}/reading/goal",        fn() => $reading->getGoal());
 $router->add('PATCH', "{$prefix}/reading/goal",        fn() => $reading->updateGoal());
@@ -221,6 +231,18 @@ $router->add('PATCH', "{$prefix}/reading/log/today",   fn() => $reading->upsertT
 $router->add('GET',  "{$prefix}/learn/books",            fn() => $learn->books());
 $router->add('GET',  "{$prefix}/learn/deck",             fn() => $learn->deck());
 $router->add('POST', "{$prefix}/learn/session/complete", fn() => $learn->completeSession());
+
+// Quiz
+$router->add('GET',  "{$prefix}/quiz/categories", fn() => $quiz->categories());
+$router->add('GET',  "{$prefix}/quiz/packs",      fn() => $quiz->packs());
+$router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}", fn($p) => $quiz->packShow($p));
+$router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}", fn($p) => $quiz->quizShow($p));
+$router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", fn($p) => $quiz->submit($p));
+
+// Dictionary (Wiktionary proxy + cache)
+$router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
+
+
 
 /**
  * Dispatch

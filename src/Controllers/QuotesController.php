@@ -38,21 +38,27 @@ final class QuotesController
 
         $body = Request::json();
         $content = trim((string)($body['content'] ?? ''));
+        $author = isset($body['author']) ? trim((string)$body['author']) : null;
+        if ($author === '') $author = null;
 
         if ($content === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'content'], 'content is required');
         }
 
+        // (option) simple garde-fou
+        if ($author !== null && mb_strlen($author) > 255) {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'author'], 'author is too long');
+        }
+
         $repo = new QuoteRepository();
 
         try {
-            $row = $repo->create($userId, $userBookId, $content);
+            $row = $repo->create($userId, $userBookId, $content, $author);
         } catch (\RuntimeException $e) {
-            // ton repo throw "Not Found" quand le user_book n'appartient pas à l'user
             throw new HttpException(404, 'NOT_FOUND', ['userBookId' => $userBookId], 'Book not found');
         }
 
-        // XP (MVP) : on log si ça fail (mieux que silent)
+        // XP (MVP)
         try {
             $progress = new ProgressService();
             $progress->award($userId, 'QUOTE_CREATED', 3, [
@@ -82,13 +88,18 @@ final class QuotesController
 
         $body = Request::json();
         $content = trim((string)($body['content'] ?? ''));
+        $author = isset($body['author']) ? trim((string)$body['author']) : null;
+        if ($author === '') $author = null;
 
         if ($content === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'content'], 'content is required');
         }
+        if ($author !== null && mb_strlen($author) > 255) {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'author'], 'author is too long');
+        }
 
         $repo = new QuoteRepository();
-        $row = $repo->update($userId, $userBookId, $quoteId, $content);
+        $row = $repo->update($userId, $userBookId, $quoteId, $content, $author);
 
         if (!$row) {
             throw new HttpException(404, 'NOT_FOUND', [
@@ -125,14 +136,18 @@ final class QuotesController
         }
 
         Response::ok(['deleted' => true]);
-        // (option) Response::noContent(); si tu préfères 204
     }
 
     private function mapRow(array $r): array
     {
+        $author = $r['author'] ?? null;
+        $author = is_string($author) ? trim($author) : null;
+        if ($author === '') $author = null;
+
         return [
             'id' => (int)($r['id'] ?? 0),
             'content' => (string)($r['content'] ?? ''),
+            'author' => $author,
             'createdAt' => $r['created_at'] ?? null,
         ];
     }

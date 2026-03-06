@@ -39,13 +39,12 @@ final class LearnRepository
     }
 
     /**
-     * Build deck cards for Learn.jsx
+     * Build deck cards for Learn
      * Returns cards:
      * { id, type:"vocab|quote", front, back, meta:{label,icon} }
      */
     public function deckForUserBook(int $userId, int $userBookId, string $mode, string $search): array
     {
-        // must belong to user
         if (!$this->userOwnsUserBook($userId, $userBookId)) {
             return [];
         }
@@ -84,25 +83,25 @@ final class LearnRepository
                     'type' => 'vocab',
                     'front' => (string)$r['word'],
                     'back' => (string)$r['definition'],
-                    'meta' => ['label' => 'Vocab', 'icon' => '📘'],
+                    'meta' => ['label' => 'Vocab', 'icon' => 'book-outline'],
                 ];
             }
         }
 
-        // QUOTES
+        // QUOTES (avec author)
         if ($mode === 'mix' || $mode === 'quotes') {
             if ($hasSearch) {
                 $stmt = $this->pdo->prepare("
-                    SELECT id, content
+                    SELECT id, content, author
                     FROM quotes
                     WHERE user_book_id = :ubid
-                      AND content LIKE :q
+                      AND (content LIKE :q OR author LIKE :q)
                     ORDER BY id DESC
                 ");
                 $stmt->execute(['ubid' => $userBookId, 'q' => $like]);
             } else {
                 $stmt = $this->pdo->prepare("
-                    SELECT id, content
+                    SELECT id, content, author
                     FROM quotes
                     WHERE user_book_id = :ubid
                     ORDER BY id DESC
@@ -112,13 +111,17 @@ final class LearnRepository
 
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
             foreach ($rows as $r) {
-                $content = (string)$r['content'];
+                $content = trim((string)$r['content']);
+                $author = $r['author'] ?? null;
+                $author = is_string($author) ? trim($author) : null;
+                if ($author === '') $author = null;
+
                 $cards[] = [
                     'id' => 'q_' . (int)$r['id'],
                     'type' => 'quote',
                     'front' => '“' . $content . '”',
-                    'back' => 'Ajoute ton interprétation plus tard (MVP).',
-                    'meta' => ['label' => 'Citation', 'icon' => '💬'],
+                    'back' => $author ? ('— ' . $author) : '— Auteur inconnu',
+                    'meta' => ['label' => 'Citation', 'icon' => 'chatbubble-ellipses-outline'],
                 ];
             }
         }
@@ -128,7 +131,6 @@ final class LearnRepository
 
     public function deckForAllBooks(int $userId, string $mode, string $search): array
     {
-        // récupérer tous les user_book_id du user
         $stmt = $this->pdo->prepare("SELECT id FROM user_books WHERE user_id = :uid");
         $stmt->execute(['uid' => $userId]);
         $ids = array_map('intval', $stmt->fetchAll(\PDO::FETCH_COLUMN) ?: []);
@@ -140,7 +142,6 @@ final class LearnRepository
         $like = '%' . $search . '%';
 
         $cards = [];
-
         $in = implode(',', array_fill(0, count($ids), '?'));
 
         // VOCAB
@@ -150,7 +151,7 @@ final class LearnRepository
                     SELECT id, word, definition
                     FROM vocab
                     WHERE user_book_id IN ($in)
-                    AND (word LIKE ? OR definition LIKE ?)
+                      AND (word LIKE ? OR definition LIKE ?)
                     ORDER BY id DESC
                 ";
                 $vStmt = $this->pdo->prepare($sql);
@@ -173,7 +174,7 @@ final class LearnRepository
                     'type' => 'vocab',
                     'front' => (string)$r['word'],
                     'back' => (string)$r['definition'],
-                    'meta' => ['label' => 'Vocab', 'icon' => '📘'],
+                    'meta' => ['label' => 'Vocab', 'icon' => 'book-outline'],
                 ];
             }
         }
@@ -182,17 +183,17 @@ final class LearnRepository
         if ($mode === 'mix' || $mode === 'quotes') {
             if ($hasSearch) {
                 $sql = "
-                    SELECT id, content
+                    SELECT id, content, author
                     FROM quotes
                     WHERE user_book_id IN ($in)
-                    AND content LIKE ?
+                      AND (content LIKE ? OR author LIKE ?)
                     ORDER BY id DESC
                 ";
                 $qStmt = $this->pdo->prepare($sql);
-                $qStmt->execute([...$ids, $like]);
+                $qStmt->execute([...$ids, $like, $like]);
             } else {
                 $sql = "
-                    SELECT id, content
+                    SELECT id, content, author
                     FROM quotes
                     WHERE user_book_id IN ($in)
                     ORDER BY id DESC
@@ -203,17 +204,21 @@ final class LearnRepository
 
             $rows = $qStmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
             foreach ($rows as $r) {
+                $content = trim((string)$r['content']);
+                $author = $r['author'] ?? null;
+                $author = is_string($author) ? trim($author) : null;
+                if ($author === '') $author = null;
+
                 $cards[] = [
                     'id' => 'q_' . (int)$r['id'],
                     'type' => 'quote',
-                    'front' => '“' . (string)$r['content'] . '”',
-                    'back' => 'Ajoute ton interprétation plus tard (MVP).',
-                    'meta' => ['label' => 'Citation', 'icon' => '💬'],
+                    'front' => '“' . $content . '”',
+                    'back' => $author ? ('— ' . $author) : '— Auteur inconnu',
+                    'meta' => ['label' => 'Citation', 'icon' => 'chatbubble-ellipses-outline'],
                 ];
             }
         }
 
         return $cards;
     }
-
 }

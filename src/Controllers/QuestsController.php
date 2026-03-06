@@ -4,8 +4,9 @@ namespace App\Controllers;
 use App\Core\Auth;
 use App\Core\Response;
 use App\Repositories\QuestRepository;
+use App\Repositories\CardRepository;
 use App\Services\ProgressService;
-use App\Services\BadgeService;
+use App\Services\CardService;
 
 final class QuestsController
 {
@@ -13,19 +14,18 @@ final class QuestsController
     {
         $uid = Auth::requireAuth();
 
-        $questRepo = new QuestRepository();
-        $stats = $questRepo->statsForUser($uid);
+        $stats = (new QuestRepository())->statsForUser($uid);
+        $progress = (new ProgressService())->snapshot($uid);
 
-        $progressService = new ProgressService();
-        $progress = $progressService->snapshot($uid);
+        // 🔥 Vérifie les unlocks
+        (new CardService())->checkUnlocks($uid);
 
-        $badgeService = new BadgeService();
-        $badges = $badgeService->computeBadges($uid, $stats);
+        $cards = (new CardRepository())->listForUser($uid);
 
         Response::ok([
             'stats' => $stats,
             'progress' => $progress,
-            'badges' => $badges,
+            'cards' => $cards,
         ]);
     }
 }

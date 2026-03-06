@@ -1,54 +1,66 @@
 <?php
+declare(strict_types=1);
+
 namespace App\Repositories;
 
 use App\Core\Db;
 
 final class ProgressRepository
 {
-    public function addXpEvent(int $userId, string $type, int $delta, array $meta = []): int
+    public function getUserXp(int $userId): int
     {
-        $pdo = Db::pdo();
-
-        $stmt = $pdo->prepare("
-            INSERT INTO xp_events (user_id, type, delta, meta)
-            VALUES (:user_id, :type, :delta, :meta)
-        ");
-
-        $stmt->execute([
-            'user_id' => $userId,
-            'type' => $type,
-            'delta' => $delta,
-            'meta' => empty($meta) ? null : json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        ]);
-
-        return (int)$pdo->lastInsertId();
+        $stmt = Db::pdo()->prepare("SELECT xp FROM users WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $userId]);
+        return (int)($stmt->fetchColumn() ?: 0);
     }
 
     public function addXpToUser(int $userId, int $delta): void
     {
-        $pdo = Db::pdo();
-
-        // Evite de descendre sous 0
-        $stmt = $pdo->prepare("
+        $stmt = Db::pdo()->prepare("
             UPDATE users
-            SET xp = GREATEST(0, xp + :delta)
+            SET xp = xp + :delta
             WHERE id = :id
             LIMIT 1
         ");
+        $stmt->execute(['delta' => $delta, 'id' => $userId]);
+    }
 
+    public function addXpEvent(int $userId, string $type, int $delta, array $meta = []): void
+    {
+        $stmt = Db::pdo()->prepare("
+            INSERT INTO xp_events (user_id, type, delta, meta)
+            VALUES (:uid, :type, :delta, :meta)
+        ");
         $stmt->execute([
+            'uid' => $userId,
+            'type' => $type,
             'delta' => $delta,
-            'id' => $userId,
+            'meta' => $meta ? json_encode($meta, JSON_UNESCAPED_UNICODE) : null,
         ]);
     }
 
-    public function getUserXp(int $userId): int
+    /**
+     * Check existence of an xp event for a given meta key/value.
+     * Example: hasEventMeta($uid, 'ANALYSIS_ADDED', 'userBookId', 12)
+     */
+    public function hasEventMeta(int $userId, string $type, string $metaKey, string|int $metaValue): bool
     {
-        $pdo = Db::pdo();
-        $stmt = $pdo->prepare("SELECT xp FROM users WHERE id = :id LIMIT 1");
-        $stmt->execute(['id' => $userId]);
-        $row = $stmt->fetch();
+        $sql = "
+            SELECT 1
+            FROM xp_events
+            WHERE user_id = :uid
+              AND type = :type
+              AND JSON_UNQUOTE(JSON_EXTRACT(meta, :path)) = :val
+            LIMIT 1
+        ";
+        $stmt = Db::pdo()->prepare($sql);
+        $stmt->execute([
+            'uid' => $userId,
+            'type' => $type,
+            'path' => '$.' . $metaKey,
+            'val' => (string)$metaValue,
+        ]);
 
-        return (int)($row['xp'] ?? 0);
+        return (bool)$stmt->fetchColumn();
     }
 }
