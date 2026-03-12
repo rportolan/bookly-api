@@ -76,7 +76,9 @@ final class CardRepository
         $stmt->execute(['uid' => $userId, 'cid' => $cardId]);
 
         $row = $stmt->fetch();
-        if (!$row) return null;
+        if (!$row) {
+            return null;
+        }
 
         return $this->mapRow($row);
     }
@@ -113,15 +115,13 @@ final class CardRepository
             'subtitle' => $row['subtitle'] ?? null,
             'description' => $row['description'] ?? null,
             'type' => $row['type'] ?? null,
-            'rarity' => (string)($row['rarity'] ?? 'common'),
+            'genre' => (string)($row['genre'] ?? 'nouvelle'),
             'series' => $row['series'] ?? null,
             'image_url' => $row['image_url'] ?? null,
 
-            // ✅ AJOUT : infos de déblocage (viennent de cards.*)
             'unlock_type' => (string)($row['unlock_type'] ?? ''),
             'unlock_value' => (int)($row['unlock_value'] ?? 0),
 
-            // état user
             'status' => $status ?? 'locked',
             'unlocked' => $status !== null,
             'claimed' => $status === 'claimed',
