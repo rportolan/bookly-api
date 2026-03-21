@@ -133,10 +133,7 @@ final class GoogleBooksController
         $identifiers = $info['industryIdentifiers'] ?? [];
         [$isbn10, $isbn13] = $this->extractIsbns($identifiers);
 
-        // ✅ genre simplifié (utile aussi en search UI si tu veux l’afficher plus tard)
         $genre = $this->simplifyGenre($info['categories'] ?? null);
-
-        // ✅ description nettoyée pour éviter HTML partout
         $desc = TextSanitizer::htmlToText($info['description'] ?? null);
 
         return [
@@ -146,7 +143,7 @@ final class GoogleBooksController
             'authors' => array_values(array_map('strval', $authors)),
             'publisher' => $publisher,
             'pages' => $pageCount,
-            'coverUrl' => $cover,
+            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null, // ✅ force https
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
             'publishedDate' => $info['publishedDate'] ?? null,
@@ -186,10 +183,7 @@ final class GoogleBooksController
 
         [$isbn10, $isbn13] = $this->extractIsbns($info['industryIdentifiers'] ?? []);
 
-        // ✅ genre simplifié (principal)
         $genre = $this->simplifyGenre($info['categories'] ?? null);
-
-        // ✅ summary clean (HTML -> texte)
         $summary = TextSanitizer::htmlToText($info['description'] ?? null);
 
         return [
@@ -199,7 +193,7 @@ final class GoogleBooksController
             'genre' => $genre,
             'pages' => isset($info['pageCount']) ? (int)$info['pageCount'] : 0,
             'publisher' => $info['publisher'] ?? null,
-            'coverUrl' => $cover,
+            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null, // ✅ force https
             'summary' => $summary,
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
@@ -215,7 +209,6 @@ final class GoogleBooksController
     {
         if (!is_array($categories) || count($categories) === 0) return null;
 
-        // 1) prendre la première catégorie non vide
         $raw = null;
         foreach ($categories as $c) {
             $s = trim((string)$c);
@@ -223,15 +216,11 @@ final class GoogleBooksController
         }
         if (!$raw) return null;
 
-        // 2) Split par séparateurs fréquents
         $parts = preg_split('/\s*\/\s*|\s*>\s*|\s*-\s*/', $raw) ?: [$raw];
         $parts = array_values(array_filter(array_map('trim', $parts), fn($x) => $x !== ''));
 
         if (count($parts) === 0) return null;
 
-        // 3) Heuristique:
-        // - si "Fiction" est présent, on préfère le segment suivant (souvent le vrai genre)
-        // - sinon on prend le segment le plus "spécifique" (pas trop générique)
         $lower = array_map(fn($p) => mb_strtolower($p), $parts);
 
         $generic = [
@@ -243,14 +232,12 @@ final class GoogleBooksController
             return $this->capGenre($parts[$idxFiction + 1]);
         }
 
-        // 4) prendre le premier non-générique
         foreach ($parts as $p) {
             if (!in_array(mb_strtolower($p), $generic, true)) {
                 return $this->capGenre($p);
             }
         }
 
-        // 5) fallback => dernier segment (souvent le plus spécifique)
         return $this->capGenre($parts[count($parts) - 1]);
     }
 
@@ -259,7 +246,6 @@ final class GoogleBooksController
         $g = trim($g);
         if ($g === '') return null;
 
-        // limite pour éviter des trucs énormes
         if (mb_strlen($g) > 60) {
             $g = mb_substr($g, 0, 60);
         }
