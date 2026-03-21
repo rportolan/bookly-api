@@ -7,6 +7,8 @@ use App\Core\Env;
 use App\Core\Router;
 use App\Core\Response;
 use App\Core\HttpException;
+use App\Core\SecurityHeaders;
+use App\Core\RateLimiter;
 
 use App\Controllers\HealthController;
 use App\Controllers\AuthController;
@@ -57,6 +59,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
+
+/**
+ * Security headers
+ */
+SecurityHeaders::send();
 
 /**
  * Optional sessions (OFF by default)
@@ -156,25 +163,36 @@ $prefix = '/v1';
 // Health
 $router->add('GET', "{$prefix}/health", $health);
 
-// Auth
-$router->add('POST', "{$prefix}/auth/register", fn() => $auth->register());
-$router->add('POST', "{$prefix}/auth/login",    fn() => $auth->login());
-$router->add('POST', "{$prefix}/auth/logout",   fn() => $auth->logout());
-$router->add('GET',  "{$prefix}/me",            fn() => $auth->me());
-$router->add('POST', "{$prefix}/auth/refresh",  fn() => $auth->refresh());
+// Auth — routes sensibles protégées par rate limiting
+$router->add('POST', "{$prefix}/auth/register", function () use ($auth) {
+    RateLimiter::check('register:' . RateLimiter::ip(), 5, 3600); // 5 inscriptions/IP/heure
+    $auth->register();
+});
+
+$router->add('POST', "{$prefix}/auth/login", function () use ($auth) {
+    RateLimiter::check('login:' . RateLimiter::ip(), 10, 300); // 10 tentatives/IP/5 minutes
+    $auth->login();
+});
+
+$router->add('POST', "{$prefix}/auth/logout",     fn() => $auth->logout());
+$router->add('GET',  "{$prefix}/me",              fn() => $auth->me());
+$router->add('POST', "{$prefix}/auth/refresh",    fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 
-// ✅ Email verification
+// Email verification
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
-$router->add('POST', "{$prefix}/auth/resend-verification", fn() => $auth->resendVerification());
+$router->add('POST', "{$prefix}/auth/resend-verification", function () use ($auth) {
+    RateLimiter::check('resend:' . RateLimiter::ip(), 3, 3600); // 3 renvois/IP/heure
+    $auth->resendVerification();
+});
 
-// Password reset (new)
-$router->add('POST', "{$prefix}/auth/forgot-password", fn() => $auth->forgotPassword());
+// Password reset
+$router->add('POST', "{$prefix}/auth/forgot-password", function () use ($auth) {
+    RateLimiter::check('forgot:' . RateLimiter::ip(), 5, 3600); // 5 demandes/IP/heure
+    $auth->forgotPassword();
+});
 $router->add('POST', "{$prefix}/auth/reset-password", fn() => $auth->resetPassword());
-
-// Fallback HTML (new) : lien cliquable depuis email
 $router->add('GET',  "{$prefix}/auth/reset-password", fn() => $auth->resetPasswordHtml());
-
 
 // Dashboard
 $router->add('GET', "{$prefix}/dashboard/continue", fn() => $dashboard->continue());
@@ -185,32 +203,32 @@ $router->add('PATCH',  "{$prefix}/me/password", fn() => $users->changePassword()
 $router->add('DELETE', "{$prefix}/me",          fn() => $users->deleteMe());
 
 // Books
-$router->add('GET',    "{$prefix}/books",               fn() => $books->index());
-$router->add('POST',   "{$prefix}/books",               fn() => $books->store());
-$router->add('GET',    "{$prefix}/books/{id:\d+}",      fn($p) => $books->show($p));
-$router->add('PATCH',  "{$prefix}/books/{id:\d+}",      fn($p) => $books->update($p));
-$router->add('DELETE', "{$prefix}/books/{id:\d+}",      fn($p) => $books->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress", fn($p) => $books->updateProgress($p));
+$router->add('GET',    "{$prefix}/books",                        fn() => $books->index());
+$router->add('POST',   "{$prefix}/books",                        fn() => $books->store());
+$router->add('GET',    "{$prefix}/books/{id:\d+}",               fn($p) => $books->show($p));
+$router->add('PATCH',  "{$prefix}/books/{id:\d+}",               fn($p) => $books->update($p));
+$router->add('DELETE', "{$prefix}/books/{id:\d+}",               fn($p) => $books->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress",      fn($p) => $books->updateProgress($p));
 
-// ✅ Google Books (proxy + cache + import)
+// Google Books (proxy + cache + import)
 $router->add('GET',  "{$prefix}/google-books/search", fn() => $gbooks->search());
 $router->add('POST', "{$prefix}/google-books/import", fn() => $gbooks->import());
 
 // Quotes
-$router->add('GET',    "{$prefix}/books/{id}/quotes",            fn($p) => $quotes->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/quotes",            fn($p) => $quotes->store($p));
-$router->add('DELETE', "{$prefix}/books/{id}/quotes/{quoteId}",  fn($p) => $quotes->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/quotes/{quoteId}",  fn($p) => $quotes->update($p));
+$router->add('GET',    "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->store($p));
+$router->add('DELETE', "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quotes->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quotes->update($p));
 
 // Vocab
 $router->add('GET',    "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->index($p));
 $router->add('POST',   "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->store($p));
-$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}",   fn($p) => $vocab->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}",   fn($p) => $vocab->update($p));
+$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}",  fn($p) => $vocab->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}",  fn($p) => $vocab->update($p));
 
 // Chapters
-$router->add('GET',    "{$prefix}/books/{id}/chapters",              fn($p) => $chapters->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/chapters",              fn($p) => $chapters->store($p));
+$router->add('GET',    "{$prefix}/books/{id}/chapters",               fn($p) => $chapters->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/chapters",               fn($p) => $chapters->store($p));
 $router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->update($p));
 $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->destroy($p));
 
@@ -218,14 +236,14 @@ $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => 
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
 
 // Cards
-$router->add('GET',  "{$prefix}/cards", fn() => $cards->index());
-$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", fn($p) => $cards->claim($p));
+$router->add('GET',  "{$prefix}/cards",                    fn() => $cards->index());
+$router->add('POST', "{$prefix}/cards/{id:\d+}/claim",     fn($p) => $cards->claim($p));
 
 // Reading
-$router->add('GET',   "{$prefix}/reading/goal",        fn() => $reading->getGoal());
-$router->add('PATCH', "{$prefix}/reading/goal",        fn() => $reading->updateGoal());
-$router->add('GET',   "{$prefix}/reading/log",         fn() => $reading->getLog());
-$router->add('PATCH', "{$prefix}/reading/log/today",   fn() => $reading->upsertToday());
+$router->add('GET',   "{$prefix}/reading/goal",      fn() => $reading->getGoal());
+$router->add('PATCH', "{$prefix}/reading/goal",      fn() => $reading->updateGoal());
+$router->add('GET',   "{$prefix}/reading/log",       fn() => $reading->getLog());
+$router->add('PATCH', "{$prefix}/reading/log/today", fn() => $reading->upsertToday());
 
 // Learn
 $router->add('GET',  "{$prefix}/learn/books",            fn() => $learn->books());
@@ -233,16 +251,14 @@ $router->add('GET',  "{$prefix}/learn/deck",             fn() => $learn->deck())
 $router->add('POST', "{$prefix}/learn/session/complete", fn() => $learn->completeSession());
 
 // Quiz
-$router->add('GET',  "{$prefix}/quiz/categories", fn() => $quiz->categories());
-$router->add('GET',  "{$prefix}/quiz/packs",      fn() => $quiz->packs());
-$router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}", fn($p) => $quiz->packShow($p));
-$router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}", fn($p) => $quiz->quizShow($p));
+$router->add('GET',  "{$prefix}/quiz/categories",               fn() => $quiz->categories());
+$router->add('GET',  "{$prefix}/quiz/packs",                    fn() => $quiz->packs());
+$router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}",           fn($p) => $quiz->packShow($p));
+$router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}",         fn($p) => $quiz->quizShow($p));
 $router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", fn($p) => $quiz->submit($p));
 
 // Dictionary (Wiktionary proxy + cache)
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
-
-
 
 /**
  * Dispatch
@@ -254,9 +270,7 @@ if ($uri !== '/' && str_ends_with($uri, '/')) {
     $uri = rtrim($uri, '/');
 }
 
-/**
- * Alias: /api/* => /v1/*
- */
+// Alias: /api/* => /v1/*
 if (str_starts_with($uri, '/api/')) {
     $uri = '/v1' . substr($uri, 4);
 }

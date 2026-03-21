@@ -31,4 +31,30 @@ final class Validator
         }
         return $val;
     }
+
+    /**
+     * Valide qu'un champ texte optionnel ne dépasse pas une taille max.
+     * Utilisé pour les grands champs (summary, analysis_work, resume, observation...).
+     *
+     * @param int $maxChars Par défaut 20 000 caractères (~20 ko de texte)
+     */
+    public static function optionalText(array $body, string $key, int $maxChars = 20000): ?string
+    {
+        if (!array_key_exists($key, $body) || $body[$key] === null) {
+            return null;
+        }
+
+        $val = (string)$body[$key];
+
+        if (mb_strlen($val) > $maxChars) {
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => $key, 'max' => $maxChars],
+                "$key is too long (max $maxChars characters)"
+            );
+        }
+
+        return $val === '' ? null : $val;
+    }
 }
