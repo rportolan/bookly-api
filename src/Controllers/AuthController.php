@@ -119,7 +119,7 @@ final class AuthController
         if (empty($user['email_verified_at'])) {
             throw new HttpException(403, 'EMAIL_NOT_VERIFIED', [
                 'action' => 'resend_verification',
-                'email' => (string)($user['email'] ?? ''), // ✅ allow front to prefill
+                'email' => (string)($user['email'] ?? ''),
             ], 'Email not verified');
         }
 
@@ -149,12 +149,12 @@ final class AuthController
         $token = trim((string)($_GET['token'] ?? ''));
 
         if ($email === '' || $token === '') {
-            $this->renderSimpleHtml("Lien invalide.", false, "Bookly - Vérification");
+            $this->renderSimpleHtml("Lien invalide.", false, "Readout - Vérification");
             return;
         }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $this->renderSimpleHtml("Adresse email invalide.", false, "Bookly - Vérification");
+            $this->renderSimpleHtml("Adresse email invalide.", false, "Readout - Vérification");
             return;
         }
 
@@ -164,18 +164,18 @@ final class AuthController
         $row = $verifyRepo->findValidByEmailAndTokenHash($email, $tokenHash);
 
         if (!$row) {
-            $this->renderSimpleHtml("Lien invalide ou expiré.", false, "Bookly - Vérification");
+            $this->renderSimpleHtml("Lien invalide ou expiré.", false, "Readout - Vérification");
             return;
         }
 
         if (!empty($row['used_at'])) {
-            $this->renderSimpleHtml("Ton email est déjà vérifié.", true, "Bookly - Vérification");
+            $this->renderSimpleHtml("Ton email est déjà vérifié.", true, "Readout - Vérification");
             return;
         }
 
         $expiresAt = strtotime((string)$row['expires_at']);
         if ($expiresAt <= 0 || $expiresAt < time()) {
-            $this->renderSimpleHtml("Lien expiré.", false, "Bookly - Vérification");
+            $this->renderSimpleHtml("Lien expiré.", false, "Readout - Vérification");
             return;
         }
 
@@ -185,7 +185,7 @@ final class AuthController
         $userRepo->markEmailVerified($userId);
         $verifyRepo->markUsed($userId);
 
-        $this->renderSimpleHtml("Email vérifié avec succès ! 🎉", true, "Bookly - Vérification");
+        $this->renderSimpleHtml("Email vérifié avec succès ! 🎉", true, "Readout - Vérification");
     }
 
     /**
@@ -420,7 +420,7 @@ final class AuthController
             </p>
           </form>
         " : "
-          <p style='margin-top:16px;color:#9ca3af;'>Retourne dans l’app et connecte-toi.</p>
+          <p style='margin-top:16px;color:#9ca3af;'>Retourne dans l'app et connecte-toi.</p>
         ";
 
         return "
@@ -429,14 +429,14 @@ final class AuthController
         <head>
           <meta charset='UTF-8'>
           <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-          <title>Bookly - Reset password</title>
+          <title>Readout - Réinitialisation du mot de passe</title>
         </head>
         <body style='margin:0;font-family:Arial;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;'>
           <div style='text-align:center;padding:24px;max-width:420px;'>
             <h1 style='color:$color;'>$message</h1>
             $form
             <p style='margin-top:18px;font-size:12px;color:#6b7280;'>
-              Si tu n’es pas à l’origine de cette demande, tu peux ignorer cette page.
+              Si tu n'es pas à l'origine de cette demande, tu peux ignorer cette page.
             </p>
           </div>
         </body>
@@ -540,15 +540,37 @@ final class AuthController
         $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
         $verifyUrl = $appUrl . "/v1/auth/verify-email?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
 
-        $subject = "Confirme ton email - Bookly";
+        $subject = "Confirme ton adresse email - Readout";
         $html = "
-            <div style=\"font-family:Arial,sans-serif;line-height:1.4\">
-              <h2>Confirme ton email</h2>
-              <p>Bienvenue sur Bookly 👋</p>
-              <p>Clique sur ce bouton pour confirmer ton adresse email :</p>
-              <p><a href=\"{$verifyUrl}\" style=\"display:inline-block;padding:12px 16px;text-decoration:none;border-radius:10px;background:#111827;color:#fff\">Confirmer mon email</a></p>
-              <p style=\"color:#6b7280;font-size:12px\">Si le bouton ne marche pas, copie/colle ce lien :</p>
-              <p style=\"color:#6b7280;font-size:12px\">{$verifyUrl}</p>
+            <div style=\"font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;color:#111827\">
+
+              <h2 style=\"margin-top:0;font-size:22px;font-weight:900;color:#111827\">Confirme ton adresse email</h2>
+
+              <p style=\"font-size:15px;line-height:1.6;color:#374151\">
+                Bienvenue sur <strong>Readout</strong> 👋<br>
+                Clique sur le bouton ci-dessous pour confirmer ton adresse email et activer ton compte.
+              </p>
+
+              <p style=\"margin:28px 0;\">
+                <a href=\"{$verifyUrl}\"
+                   style=\"display:inline-block;padding:14px 24px;text-decoration:none;border-radius:10px;background:#111827;color:#ffffff;font-weight:800;font-size:15px\">
+                  Confirmer mon email
+                </a>
+              </p>
+
+              <p style=\"font-size:13px;color:#6b7280;line-height:1.6\">
+                Si le bouton ne fonctionne pas, copie et colle ce lien dans ton navigateur :<br>
+                <span style=\"color:#4b5563\">{$verifyUrl}</span>
+              </p>
+
+              <hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0\">
+
+              <p style=\"font-size:12px;color:#9ca3af;line-height:1.6\">
+                Ce lien est valable <strong>1 heure</strong>.<br>
+                Si tu n'es pas à l'origine de cette inscription, ignore simplement cet email.<br><br>
+                📬 <em>Cet email t'a été envoyé automatiquement. Si tu ne le trouves pas, vérifie ton dossier <strong>spam ou courrier indésirable</strong>.</em>
+              </p>
+
             </div>
         ";
 
@@ -568,15 +590,37 @@ final class AuthController
         $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
         $resetUrl = $appUrl . "/v1/auth/reset-password?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
 
-        $subject = "Réinitialise ton mot de passe - Bookly";
+        $subject = "Réinitialise ton mot de passe - Readout";
         $html = "
-            <div style=\"font-family:Arial,sans-serif;line-height:1.4\">
-              <h2>Réinitialisation du mot de passe</h2>
-              <p>Tu as demandé à réinitialiser ton mot de passe.</p>
-              <p><a href=\"{$resetUrl}\" style=\"display:inline-block;padding:12px 16px;text-decoration:none;border-radius:10px;background:#111827;color:#fff\">Réinitialiser</a></p>
-              <p style=\"color:#6b7280;font-size:12px\">Si tu n’es pas à l’origine de la demande, ignore cet email.</p>
-              <p style=\"color:#6b7280;font-size:12px\">Lien (si le bouton ne marche pas) :</p>
-              <p style=\"color:#6b7280;font-size:12px\">{$resetUrl}</p>
+            <div style=\"font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;color:#111827\">
+
+              <h2 style=\"margin-top:0;font-size:22px;font-weight:900;color:#111827\">Réinitialisation du mot de passe</h2>
+
+              <p style=\"font-size:15px;line-height:1.6;color:#374151\">
+                Tu as demandé à réinitialiser le mot de passe de ton compte <strong>Readout</strong>.<br>
+                Clique sur le bouton ci-dessous pour choisir un nouveau mot de passe.
+              </p>
+
+              <p style=\"margin:28px 0;\">
+                <a href=\"{$resetUrl}\"
+                   style=\"display:inline-block;padding:14px 24px;text-decoration:none;border-radius:10px;background:#111827;color:#ffffff;font-weight:800;font-size:15px\">
+                  Réinitialiser mon mot de passe
+                </a>
+              </p>
+
+              <p style=\"font-size:13px;color:#6b7280;line-height:1.6\">
+                Si le bouton ne fonctionne pas, copie et colle ce lien dans ton navigateur :<br>
+                <span style=\"color:#4b5563\">{$resetUrl}</span>
+              </p>
+
+              <hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0\">
+
+              <p style=\"font-size:12px;color:#9ca3af;line-height:1.6\">
+                Ce lien est valable <strong>1 heure</strong>.<br>
+                Si tu n'es pas à l'origine de cette demande, ignore cet email — ton mot de passe ne sera pas modifié.<br><br>
+                📬 <em>Cet email t'a été envoyé automatiquement. Si tu ne le trouves pas, vérifie ton dossier <strong>spam ou courrier indésirable</strong>.</em>
+              </p>
+
             </div>
         ";
 
@@ -609,7 +653,7 @@ final class AuthController
                     Tu peux maintenant retourner dans l'application et te connecter.
                 </p>
                 <p style='margin-top:24px;font-size:12px;color:#6b7280;'>
-                    Si l'application ne s'ouvre pas automatiquement, retourne simplement à Bookly.
+                    Si l'application ne s'ouvre pas automatiquement, retourne simplement à Readout.
                 </p>
             </div>
         </body>
@@ -645,7 +689,7 @@ final class AuthController
 
         $now = time();
         $payload = [
-            'iss' => 'bookly-api',
+            'iss' => 'readout-api',
             'sub' => $userId,
             'iat' => $now,
             'exp' => $now + $ttl,
