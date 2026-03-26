@@ -1,12 +1,4 @@
 <?php
-// src/Services/ProgressService.php
-//
-// Modifications par rapport à l'original :
-// 1. award() : capture le niveau avant d'ajouter l'XP, passe $levelBefore à snapshot()
-// 2. snapshot() : accepte $previousLevel optionnel, calcule leveledUp
-// 3. getLevelForUser() : méthode publique pour lire le niveau actuel sans snapshot complet
-//    (utile dans les controllers qui font plusieurs awards d'affilée)
-//
 declare(strict_types=1);
 
 namespace App\Services;
@@ -30,16 +22,16 @@ final class ProgressService
     ];
 
     private array $xpRewards = [
-        'BOOK_CREATED'         => 80,
-        'QUOTE_CREATED'        => 25,
-        'VOCAB_CREATED'        => 20,
-        'CHAPTER_ADDED'        => 20,
-        'ANALYSIS_ADDED'       => 60,
-        'LEARN_SESSION_DONE'   => 60,
-        'PAGES_READ'           => 2,
-        'BOOK_DONE'            => 150,
-        'STREAK_DAY'           => 40,
-        'QUIZ_COMPLETED'       => 50,
+        'BOOK_CREATED' => 80,
+        'QUOTE_CREATED' => 25,
+        'VOCAB_CREATED' => 20,
+        'CHAPTER_ADDED' => 20,
+        'ANALYSIS_ADDED' => 60,
+        'LEARN_SESSION_DONE' => 60,
+        'PAGES_READ' => 2,
+        'BOOK_DONE' => 150,
+        'STREAK_DAY' => 40,
+        'QUIZ_COMPLETED' => 50,
         'DAILY_GOAL_COMPLETED' => 10,
     ];
 
@@ -50,16 +42,6 @@ final class ProgressService
         $this->progressRepo = new ProgressRepository();
     }
 
-    /**
-     * ✅ Nouveau : retourne juste le niveau actuel de l'utilisateur.
-     * Utile pour mémoriser le niveau AVANT une série d'awards.
-     */
-    public function getLevelForUser(int $userId): int
-    {
-        $xp = $this->progressRepo->getUserXp($userId);
-        return $this->computeLevel($xp);
-    }
-
     public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
         if ($delta === 0) {
@@ -67,46 +49,39 @@ final class ProgressService
         }
 
         if ($delta === 0) {
+            // même sans xp, on check les cartes (utile si certains triggers passent par award sans delta)
             (new CardService())->checkUnlocks($userId);
             return $this->snapshot($userId);
         }
 
-        // ✅ Niveau avant l'ajout d'XP
-        $xpBefore    = $this->progressRepo->getUserXp($userId);
-        $levelBefore = $this->computeLevel($xpBefore);
-
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
         $this->progressRepo->addXpToUser($userId, $delta);
 
+        // 🔥 cartes
         (new CardService())->checkUnlocks($userId);
 
-        return $this->snapshot($userId, $levelBefore);
+        return $this->snapshot($userId);
     }
 
-    public function snapshot(int $userId, ?int $previousLevel = null): array
+    public function snapshot(int $userId): array
     {
-        $xp    = $this->progressRepo->getUserXp($userId);
+        $xp = $this->progressRepo->getUserXp($userId);
         $level = $this->computeLevel($xp);
         $title = $this->computeTitle($level);
 
-        $minXp     = $this->getLevelMinXp($level);
+        $minXp = $this->getLevelMinXp($level);
         $nextMinXp = $this->getLevelMinXp($level + 1);
 
         $xpThisLevel = max(0, $xp - $minXp);
-        $xpToNext    = max(0, $nextMinXp - $xp);
-        $span        = max(1, $nextMinXp - $minXp);
-
-        // ✅ leveledUp = vrai uniquement si le niveau a augmenté pendant cette action
-        $leveledUp = ($previousLevel !== null && $level > $previousLevel);
+        $xpToNext = max(0, $nextMinXp - $xp);
+        $span = max(1, $nextMinXp - $minXp);
 
         return [
-            'xp'            => $xp,
-            'level'         => $level,
-            'title'         => $title,
-            'progressPct'   => (int)round(($xpThisLevel / $span) * 100),
-            'xpToNext'      => $xpToNext,
-            'leveledUp'     => $leveledUp,
-            'previousLevel' => $previousLevel ?? $level,
+            'xp' => $xp,
+            'level' => $level,
+            'title' => $title,
+            'progressPct' => (int)round(($xpThisLevel / $span) * 100),
+            'xpToNext' => $xpToNext,
         ];
     }
 
