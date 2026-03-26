@@ -44,23 +44,37 @@ final class ProgressService
 
     public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
+        $before = $this->snapshot($userId);
+
         if ($delta === 0) {
             $delta = $this->computeDeltaFromType($type, $meta);
         }
 
         if ($delta === 0) {
-            // même sans xp, on check les cartes (utile si certains triggers passent par award sans delta)
             (new CardService())->checkUnlocks($userId);
-            return $this->snapshot($userId);
+            $after = $this->snapshot($userId);
+
+            return $this->attachAwardMeta(
+                $after,
+                $this->buildLevelUpPayload($before, $after),
+                $type,
+                0
+            );
         }
 
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
         $this->progressRepo->addXpToUser($userId, $delta);
 
-        // 🔥 cartes
         (new CardService())->checkUnlocks($userId);
 
-        return $this->snapshot($userId);
+        $after = $this->snapshot($userId);
+
+        return $this->attachAwardMeta(
+            $after,
+            $this->buildLevelUpPayload($before, $after),
+            $type,
+            $delta
+        );
     }
 
     public function snapshot(int $userId): array
@@ -82,6 +96,35 @@ final class ProgressService
             'title' => $title,
             'progressPct' => (int)round(($xpThisLevel / $span) * 100),
             'xpToNext' => $xpToNext,
+            'levelXp' => $xpThisLevel,
+            'levelXpSpan' => $span,
+        ];
+    }
+
+    public function buildLevelUpPayload(array $before, array $after): array
+    {
+        $previousLevel = (int)($before['level'] ?? 1);
+        $newLevel = (int)($after['level'] ?? $previousLevel);
+
+        $previousTitle = (string)($before['title'] ?? 'Lecteur novice');
+        $newTitle = (string)($after['title'] ?? $previousTitle);
+
+        return [
+            'happened' => $newLevel > $previousLevel,
+            'previousLevel' => $previousLevel,
+            'newLevel' => $newLevel,
+            'previousTitle' => $previousTitle,
+            'newTitle' => $newTitle,
+        ];
+    }
+
+    private function attachAwardMeta(array $snapshot, array $levelUp, string $type, int $delta): array
+    {
+        return [
+            ...$snapshot,
+            'awardedXp' => $delta,
+            'awardType' => $type,
+            'levelUp' => $levelUp,
         ];
     }
 

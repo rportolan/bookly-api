@@ -65,8 +65,11 @@ final class BooksController
         $repo = new BookRepository();
         $row = $repo->createForUser($userId, $body);
 
+        $progressService = new ProgressService();
+        $progress = $progressService->snapshot($userId);
+
         try {
-            (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
+            $progress = $progressService->award($userId, 'BOOK_CREATED', 0, [
                 'userBookId' => (int)($row['id'] ?? 0),
                 'bookId' => (int)($row['bookId'] ?? 0),
                 'title' => (string)($row['title'] ?? ''),
@@ -75,7 +78,14 @@ final class BooksController
             error_log('[BOOKLY][XP] award BOOK_CREATED failed: ' . $e->getMessage());
         }
 
-        Response::created($this->mapRow($row));
+        Response::created([
+            ...$this->mapRow($row),
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $progress['levelUp'] ?? $progressService->buildLevelUpPayload(
+                $progressService->snapshot($userId),
+                $progressService->snapshot($userId)
+            ),
+        ]);
     }
 
     public function update(array $params): void
@@ -100,7 +110,10 @@ final class BooksController
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
         }
 
-        // ✅ Award ANALYSIS_ADDED once per book when it becomes non-empty
+        $progressService = new ProgressService();
+        $beforeProgress = $progressService->snapshot($userId);
+        $afterProgress = $beforeProgress;
+
         try {
             $beforeAnalysis = trim((string)($before['analysis_work'] ?? ''));
             $afterAnalysis = trim((string)($row['analysis_work'] ?? ''));
@@ -111,18 +124,29 @@ final class BooksController
                 $already = $pr->hasEventMeta($userId, 'ANALYSIS_ADDED', 'userBookId', (int)$id);
 
                 if (!$already) {
-                    (new ProgressService())->award($userId, 'ANALYSIS_ADDED', 0, [
+                    $afterProgress = $progressService->award($userId, 'ANALYSIS_ADDED', 0, [
                         'userBookId' => (int)$id,
                         'bookId' => (int)($row['bookId'] ?? 0),
                         'title' => (string)($row['title'] ?? ''),
                     ]);
+                } else {
+                    $afterProgress = $progressService->snapshot($userId);
                 }
+            } else {
+                $afterProgress = $progressService->snapshot($userId);
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award ANALYSIS_ADDED failed: ' . $e->getMessage());
+            $afterProgress = $progressService->snapshot($userId);
         }
 
-        Response::ok($this->mapRow($row));
+        $levelUp = $afterProgress['levelUp'] ?? $progressService->buildLevelUpPayload($beforeProgress, $afterProgress);
+
+        Response::ok([
+            ...$this->mapRow($row),
+            'progress' => $this->onlyProgressSnapshot($afterProgress),
+            'levelUp' => $levelUp,
+        ]);
     }
 
     public function destroy(array $params): void
@@ -186,11 +210,24 @@ final class BooksController
         Response::ok($this->mapRow($updated));
     }
 
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
     private function mapRow(array $r): array
     {
         return [
             'id' => (int)$r['id'],
-            'bookId' => (int)$r['bookId'],
+            'bookId' => (int)($r['bookId'] ?? 0),
             'title' => (string)($r['title'] ?? ''),
             'author' => (string)($r['author'] ?? ''),
             'genre' => $r['genre'] ?? null,

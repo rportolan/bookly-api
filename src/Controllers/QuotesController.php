@@ -45,7 +45,6 @@ final class QuotesController
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'content'], 'content is required');
         }
 
-        // (option) simple garde-fou
         if ($author !== null && mb_strlen($author) > 255) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'author'], 'author is too long');
         }
@@ -58,10 +57,11 @@ final class QuotesController
             throw new HttpException(404, 'NOT_FOUND', ['userBookId' => $userBookId], 'Book not found');
         }
 
-        // XP (MVP)
+        $progressService = new ProgressService();
+        $progress = $progressService->snapshot($userId);
+
         try {
-            $progress = new ProgressService();
-            $progress->award($userId, 'QUOTE_CREATED', 3, [
+            $progress = $progressService->award($userId, 'QUOTE_CREATED', 3, [
                 'quoteId' => (int)($row['id'] ?? 0),
                 'userBookId' => $userBookId,
             ]);
@@ -69,7 +69,14 @@ final class QuotesController
             error_log('[BOOKLY][XP] award QUOTE_CREATED failed: ' . $e->getMessage());
         }
 
-        Response::created($this->mapRow($row));
+        Response::created([
+            ...$this->mapRow($row),
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $progress['levelUp'] ?? $progressService->buildLevelUpPayload(
+                $progressService->snapshot($userId),
+                $progressService->snapshot($userId)
+            ),
+        ]);
     }
 
     public function update(array $params): void
@@ -136,6 +143,19 @@ final class QuotesController
         }
 
         Response::ok(['deleted' => true]);
+    }
+
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
     }
 
     private function mapRow(array $r): array

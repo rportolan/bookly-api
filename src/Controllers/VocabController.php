@@ -52,7 +52,6 @@ final class VocabController
         try {
             $row = $repo->create($userId, $userBookId, $word, $definition);
         } catch (\PDOException $e) {
-            // Unique constraint (si tu l'ajoutes plus tard) => 1062
             if ((int)($e->errorInfo[1] ?? 0) === 1062) {
                 throw new HttpException(409, 'CONFLICT', [
                     'field' => 'word',
@@ -64,10 +63,11 @@ final class VocabController
             throw new HttpException(404, 'NOT_FOUND', ['userBookId' => $userBookId], 'Book not found');
         }
 
-        // XP (MVP)
+        $progressService = new ProgressService();
+        $progress = $progressService->snapshot($userId);
+
         try {
-            $progress = new ProgressService();
-            $progress->award($userId, 'VOCAB_CREATED', 2, [
+            $progress = $progressService->award($userId, 'VOCAB_CREATED', 2, [
                 'vocabId' => (int)($row['id'] ?? 0),
                 'userBookId' => $userBookId,
                 'word' => $word,
@@ -76,7 +76,14 @@ final class VocabController
             error_log('[BOOKLY][XP] award VOCAB_CREATED failed: ' . $e->getMessage());
         }
 
-        Response::created($this->mapRow($row));
+        Response::created([
+            ...$this->mapRow($row),
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $progress['levelUp'] ?? $progressService->buildLevelUpPayload(
+                $progressService->snapshot($userId),
+                $progressService->snapshot($userId)
+            ),
+        ]);
     }
 
     public function update(array $params): void
@@ -164,7 +171,19 @@ final class VocabController
         }
 
         Response::ok(['deleted' => true]);
-        // option: Response::noContent();
+    }
+
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
     }
 
     private function mapRow(array $r): array

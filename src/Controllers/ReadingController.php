@@ -99,18 +99,20 @@ final class ReadingController
 
         $goal = (int)$this->repo->getGoalPagesPerDay($userId);
 
+        $progressService = new ProgressService();
+        $beforeProgress = $progressService->snapshot($userId);
+
         $this->repo->upsertLog($userId, $today, $pages);
 
         $crossedGoal = ($goal > 0 && $beforePages < $goal && $pages >= $goal);
 
         $rewardedGoal = false;
-        $progressGoal = null;
+        $rewardedStreak = false;
+        $streakDays = $this->repo->computeCurrentStreakDays($userId);
 
-        // ✅ daily goal XP (idempotent via existing method)
         if ($crossedGoal && !$this->repo->hasDailyGoalXp($userId, $today)) {
             try {
-                $ps = new ProgressService();
-                $progressGoal = $ps->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
+                $progressService->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
                     'day' => $today,
                     'goal' => $goal,
                     'pages' => $pages,
@@ -121,16 +123,12 @@ final class ReadingController
             }
         }
 
-        // ✅ streak XP: once per day if pages>0
-        $rewardedStreak = false;
-        $streakDays = $this->repo->computeCurrentStreakDays($userId);
-
         if ($pages > 0) {
             try {
                 $pr = new ProgressRepository();
                 $already = $pr->hasEventMeta($userId, 'STREAK_DAY', 'day', $today);
                 if (!$already) {
-                    (new ProgressService())->award($userId, 'STREAK_DAY', 0, [
+                    $progressService->award($userId, 'STREAK_DAY', 0, [
                         'day' => $today,
                         'pages' => $pages,
                         'streakDays' => $streakDays,
@@ -142,12 +140,14 @@ final class ReadingController
             }
         }
 
-        // 🔥 IMPORTANT: check unlocks even if NO XP was awarded
         try {
             (new CardService())->checkUnlocks($userId);
         } catch (\Throwable $e) {
             error_log('[BOOKLY][cards] checkUnlocks failed: ' . $e->getMessage());
         }
+
+        $afterProgress = $progressService->snapshot($userId);
+        $levelUp = $progressService->buildLevelUpPayload($beforeProgress, $afterProgress);
 
         Response::ok([
             'entry' => ['date' => $today, 'pages' => $pages],
@@ -156,7 +156,9 @@ final class ReadingController
             'rewardedDailyGoal' => $rewardedGoal,
             'rewardedStreakDay' => $rewardedStreak,
             'streakDays' => $streakDays,
-            'progress' => $progressGoal, // null si pas de reward daily goal
+            'progress' => $afterProgress,
+            'levelUp' => $levelUp,
+            'awardedXp' => max(0, (int)$afterProgress['xp'] - (int)$beforeProgress['xp']),
         ]);
     }
 
