@@ -1,10 +1,11 @@
 <?php
 // src/Services/ProgressService.php
 //
-// Seul changement par rapport à l'original :
-// - award() mémorise le niveau AVANT d'ajouter l'XP
-// - snapshot() accepte un $previousLevel optionnel
-// - si le niveau a augmenté, le snapshot inclut leveledUp: true
+// Modifications par rapport à l'original :
+// 1. award() : capture le niveau avant d'ajouter l'XP, passe $levelBefore à snapshot()
+// 2. snapshot() : accepte $previousLevel optionnel, calcule leveledUp
+// 3. getLevelForUser() : méthode publique pour lire le niveau actuel sans snapshot complet
+//    (utile dans les controllers qui font plusieurs awards d'affilée)
 //
 declare(strict_types=1);
 
@@ -49,6 +50,16 @@ final class ProgressService
         $this->progressRepo = new ProgressRepository();
     }
 
+    /**
+     * ✅ Nouveau : retourne juste le niveau actuel de l'utilisateur.
+     * Utile pour mémoriser le niveau AVANT une série d'awards.
+     */
+    public function getLevelForUser(int $userId): int
+    {
+        $xp = $this->progressRepo->getUserXp($userId);
+        return $this->computeLevel($xp);
+    }
+
     public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
         if ($delta === 0) {
@@ -60,7 +71,7 @@ final class ProgressService
             return $this->snapshot($userId);
         }
 
-        // ✅ On retient le niveau AVANT d'ajouter l'XP
+        // ✅ Niveau avant l'ajout d'XP
         $xpBefore    = $this->progressRepo->getUserXp($userId);
         $levelBefore = $this->computeLevel($xpBefore);
 
@@ -69,7 +80,6 @@ final class ProgressService
 
         (new CardService())->checkUnlocks($userId);
 
-        // On passe le niveau précédent pour détecter le level up
         return $this->snapshot($userId, $levelBefore);
     }
 
@@ -86,17 +96,17 @@ final class ProgressService
         $xpToNext    = max(0, $nextMinXp - $xp);
         $span        = max(1, $nextMinXp - $minXp);
 
-        // ✅ leveledUp = true uniquement quand le niveau vient d'augmenter
+        // ✅ leveledUp = vrai uniquement si le niveau a augmenté pendant cette action
         $leveledUp = ($previousLevel !== null && $level > $previousLevel);
 
         return [
-            'xp'           => $xp,
-            'level'        => $level,
-            'title'        => $title,
-            'progressPct'  => (int)round(($xpThisLevel / $span) * 100),
-            'xpToNext'     => $xpToNext,
-            'leveledUp'    => $leveledUp,       // ✅ nouveau champ
-            'previousLevel'=> $previousLevel ?? $level, // ✅ pour info
+            'xp'            => $xp,
+            'level'         => $level,
+            'title'         => $title,
+            'progressPct'   => (int)round(($xpThisLevel / $span) * 100),
+            'xpToNext'      => $xpToNext,
+            'leveledUp'     => $leveledUp,
+            'previousLevel' => $previousLevel ?? $level,
         ];
     }
 
