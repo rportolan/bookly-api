@@ -197,17 +197,66 @@ final class BooksController
 
         $allowed = ['À lire', 'En cours', 'Terminé', 'Abandonné', 'En pause'];
         if (!in_array($status, $allowed, true)) {
-            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'status', 'allowed' => $allowed], 'Invalid status');
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'status', 'allowed' => $allowed],
+                'Invalid status'
+            );
         }
 
         $repo = new BookRepository();
+
+        $before = $repo->findOneForUser($userId, $userBookId);
+        if (!$before) {
+            throw new HttpException(404, 'NOT_FOUND', ['id' => $userBookId], 'Not Found');
+        }
+
+        $progressService = new ProgressService();
+        $beforeProgress = $progressService->snapshot($userId);
+
         $updated = $repo->updateProgress($userId, $userBookId, $progressPages, $status);
 
         if (!$updated) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $userBookId], 'Not Found');
         }
 
-        Response::ok($this->mapRow($updated));
+        $afterProgress = $beforeProgress;
+
+        try {
+            $beforeStatus = (string)($before['status'] ?? '');
+            $afterStatus = (string)($updated['status'] ?? '');
+
+            $justFinished = ($beforeStatus !== 'Terminé' && $afterStatus === 'Terminé');
+
+            if ($justFinished) {
+                $pr = new ProgressRepository();
+                $already = $pr->hasEventMeta($userId, 'BOOK_DONE', 'userBookId', $userBookId);
+
+                if (!$already) {
+                    $afterProgress = $progressService->award($userId, 'BOOK_DONE', 0, [
+                        'userBookId' => $userBookId,
+                        'bookId' => (int)($updated['bookId'] ?? 0),
+                        'title' => (string)($updated['title'] ?? ''),
+                    ]);
+                } else {
+                    $afterProgress = $progressService->snapshot($userId);
+                }
+            } else {
+                $afterProgress = $progressService->snapshot($userId);
+            }
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][XP] award BOOK_DONE failed: ' . $e->getMessage());
+            $afterProgress = $progressService->snapshot($userId);
+        }
+
+        $levelUp = $afterProgress['levelUp'] ?? $progressService->buildLevelUpPayload($beforeProgress, $afterProgress);
+
+        Response::ok([
+            ...$this->mapRow($updated),
+            'progress' => $this->onlyProgressSnapshot($afterProgress),
+            'levelUp' => $levelUp,
+        ]);
     }
 
     private function onlyProgressSnapshot(array $progress): array
