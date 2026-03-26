@@ -1,10 +1,4 @@
 <?php
-// src/Controllers/ReadingController.php
-//
-// Modification par rapport à l'original :
-// upsertToday() capture le niveau AVANT les awards,
-// puis renvoie un snapshot final avec leveledUp: true si le niveau a monté.
-//
 declare(strict_types=1);
 
 namespace App\Controllers;
@@ -28,7 +22,10 @@ final class ReadingController
     {
         $userId = Auth::requireAuth();
         $goal = $this->repo->getGoalPagesPerDay($userId);
-        Response::ok(['goalPagesPerDay' => $goal]);
+
+        Response::ok([
+            'goalPagesPerDay' => $goal,
+        ]);
     }
 
     public function updateGoal(): void
@@ -43,76 +40,101 @@ final class ReadingController
 
         $goal = (int)$goalRaw;
         $goal = max(1, min(5000, $goal));
+
         $this->repo->setGoalPagesPerDay($userId, $goal);
-        Response::ok(['goalPagesPerDay' => $goal]);
+
+        Response::ok([
+            'goalPagesPerDay' => $goal,
+        ]);
     }
 
     public function getLog(): void
     {
         $userId = Auth::requireAuth();
 
-        $to   = Request::query('to');
+        $to = Request::query('to');
         $from = Request::query('from');
 
-        if (!$to)   $to   = (new \DateTimeImmutable('today'))->format('Y-m-d');
-        if (!$from) $from = (new \DateTimeImmutable('today'))->sub(new \DateInterval('P400D'))->format('Y-m-d');
+        if (!$to) {
+            $to = (new \DateTimeImmutable('today'))->format('Y-m-d');
+        }
+        if (!$from) {
+            $from = (new \DateTimeImmutable('today'))
+                ->sub(new \DateInterval('P400D'))
+                ->format('Y-m-d');
+        }
 
         if (!$this->isDate($from) || !$this->isDate($to)) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['fields' => ['from', 'to']], 'Invalid date range');
         }
+
         if ($from > $to) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['fields' => ['from', 'to']], 'from must be <= to');
         }
 
         $entries = $this->repo->getLogsInRange($userId, $from, $to);
-        Response::ok(['entries' => $entries]);
+
+        Response::ok([
+            'entries' => $entries,
+        ]);
     }
 
     public function upsertToday(): void
     {
         $userId = Auth::requireAuth();
-        $body   = Request::json();
+        $body = Request::json();
 
         $pagesRaw = $body['pages'] ?? null;
         if ($pagesRaw === null) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'pages'], 'pages is required');
         }
 
-        $pages = max(0, min(5000, (int)$pagesRaw));
+        $pages = (int)$pagesRaw;
+        $pages = max(0, min(5000, $pages));
+
         $today = (new \DateTimeImmutable('today'))->format('Y-m-d');
 
-        $beforeRow   = $this->repo->getLogByDay($userId, $today);
+        $beforeRow = $this->repo->getLogByDay($userId, $today);
         $beforePages = (int)($beforeRow['pages'] ?? 0);
-        $goal        = (int)$this->repo->getGoalPagesPerDay($userId);
+
+        $goal = (int)$this->repo->getGoalPagesPerDay($userId);
 
         $this->repo->upsertLog($userId, $today, $pages);
 
         $crossedGoal = ($goal > 0 && $beforePages < $goal && $pages >= $goal);
 
-        $ps = new ProgressService();
+        $rewardedGoal = false;
+        $progressGoal = null;
 
-        // ✅ On capture le niveau AVANT tous les awards
-        $levelBefore    = $ps->getLevelForUser($userId);
-        $rewardedGoal   = false;
-        $rewardedStreak = false;
-        $streakDays     = $this->repo->computeCurrentStreakDays($userId);
-
-        // Award objectif du jour
+        // ✅ daily goal XP (idempotent via existing method)
         if ($crossedGoal && !$this->repo->hasDailyGoalXp($userId, $today)) {
             try {
-                $ps->award($userId, 'DAILY_GOAL_COMPLETED', 0, ['day' => $today, 'goal' => $goal, 'pages' => $pages]);
+                $ps = new ProgressService();
+                $progressGoal = $ps->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
+                    'day' => $today,
+                    'goal' => $goal,
+                    'pages' => $pages,
+                ]);
                 $rewardedGoal = true;
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][XP] award DAILY_GOAL_COMPLETED failed: ' . $e->getMessage());
             }
         }
 
-        // Award streak du jour
+        // ✅ streak XP: once per day if pages>0
+        $rewardedStreak = false;
+        $streakDays = $this->repo->computeCurrentStreakDays($userId);
+
         if ($pages > 0) {
             try {
                 $pr = new ProgressRepository();
-                if (!$pr->hasEventMeta($userId, 'STREAK_DAY', 'day', $today)) {
-                    $ps->award($userId, 'STREAK_DAY', 0, ['day' => $today, 'pages' => $pages, 'streakDays' => $streakDays]);
+                $already = $pr->hasEventMeta($userId, 'STREAK_DAY', 'day', $today);
+                if (!$already) {
+                    (new ProgressService())->award($userId, 'STREAK_DAY', 0, [
+                        'day' => $today,
+                        'pages' => $pages,
+                        'streakDays' => $streakDays,
+                    ]);
                     $rewardedStreak = true;
                 }
             } catch (\Throwable $e) {
@@ -120,24 +142,21 @@ final class ReadingController
             }
         }
 
-        // Check unlocks cartes
+        // 🔥 IMPORTANT: check unlocks even if NO XP was awarded
         try {
             (new CardService())->checkUnlocks($userId);
         } catch (\Throwable $e) {
             error_log('[BOOKLY][cards] checkUnlocks failed: ' . $e->getMessage());
         }
 
-        // ✅ Snapshot final avec leveledUp calculé par rapport au niveau d'avant
-        $progress = $ps->snapshot($userId, $levelBefore);
-
         Response::ok([
-            'entry'             => ['date' => $today, 'pages' => $pages],
-            'goalPagesPerDay'   => $goal,
-            'crossedGoalToday'  => $crossedGoal,
+            'entry' => ['date' => $today, 'pages' => $pages],
+            'goalPagesPerDay' => $goal,
+            'crossedGoalToday' => $crossedGoal,
             'rewardedDailyGoal' => $rewardedGoal,
-            'rewardedStreakDay'  => $rewardedStreak,
-            'streakDays'        => $streakDays,
-            'progress'          => $progress, // ✅ toujours présent, avec leveledUp
+            'rewardedStreakDay' => $rewardedStreak,
+            'streakDays' => $streakDays,
+            'progress' => $progressGoal, // null si pas de reward daily goal
         ]);
     }
 
