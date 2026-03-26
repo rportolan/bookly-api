@@ -19,9 +19,6 @@ final class QuizService
         private ProgressService $progressService = new ProgressService(),
     ) {}
 
-    /**
-     * @param array $answers [ {questionId, answerId}, ... ]
-     */
     public function submitAttempt(int $userId, int $quizId, array $answers): array
     {
         $meta = $this->quizRepo->findMeta($quizId);
@@ -34,7 +31,6 @@ final class QuizService
             throw new HttpException(422, 'QUIZ_INVALID', [], 'Quiz has no correct answers');
         }
 
-        // Normalize client answers => map[questionId] = answerId|null
         $given = [];
         foreach ($answers as $a) {
             if (!is_array($a)) continue;
@@ -43,7 +39,6 @@ final class QuizService
 
             if ($qid <= 0) continue;
 
-            // allow null
             if ($aidRaw === null || $aidRaw === 0 || $aidRaw === '0' || $aidRaw === '') {
                 $given[$qid] = null;
             } else {
@@ -70,17 +65,15 @@ final class QuizService
 
         $scorePct = $total > 0 ? (int)round(($correct / $total) * 100) : 0;
 
-        // XP potentiel calculé (ce que "vaudrait" la run)
         $xpBase = (int)($meta['xp_base'] ?? 0);
-        $xpPotential = (int)round($xpBase * max(0.2, $scorePct / 100)); // min 20%
+        $xpPotential = (int)round($xpBase * max(0.2, $scorePct / 100));
 
-        // Persist attempt (on garde l’historique même si pas d’XP)
         $attemptId = $this->attemptRepo->createAttempt($userId, $quizId, $total, $correct, $scorePct, $xpPotential);
         $this->attemptRepo->insertAnswers($attemptId, $rows);
 
-        // ✅ Award XP idempotent : une seule fois par quiz (via meta.quizId)
         $xpAwarded = 0;
-        $progress = null;
+        $before = $this->progressService->snapshot($userId);
+        $progress = $before;
 
         try {
             $already = $this->progressRepo->hasEventMeta($userId, 'QUIZ_COMPLETED', 'quizId', $quizId);
@@ -94,18 +87,14 @@ final class QuizService
                 ]);
                 $xpAwarded = $xpPotential;
             } else {
-                // Pas d’XP cette fois, mais on renvoie quand même l’état actuel
                 $progress = $this->progressService->snapshot($userId);
-                // Et on check les unlocks (au cas où d’autres systèmes se basent sur des stats)
                 (new CardService())->checkUnlocks($userId);
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award QUIZ_COMPLETED failed: ' . $e->getMessage());
-            // fallback: on renvoie au moins un snapshot pour que le front ne bug pas
             $progress = $this->progressService->snapshot($userId);
         }
 
-        // 🎁 Optional card_reward_id (déblocage si score >= 70)
         $cardRewarded = false;
         $cardId = isset($meta['card_reward_id']) ? (int)$meta['card_reward_id'] : 0;
 
@@ -120,27 +109,43 @@ final class QuizService
             }
         }
 
-        // ✅ Payload aligné avec le front (QuizAttemptResult)
+        $levelUp = $progress['levelUp'] ?? $this->progressService->buildLevelUpPayload($before, $progress);
+
         $result = [
             'attemptId' => $attemptId,
             'total' => $total,
             'correct' => $correct,
             'scorePct' => $scorePct,
-            'xpAwarded' => $xpAwarded, // ✅ ce que le front doit afficher
+            'xpAwarded' => $xpAwarded,
             'reward' => [
                 'cardRewarded' => $cardRewarded,
                 'cardId' => $cardId > 0 ? $cardId : null,
             ],
-            'progress' => $progress,
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $levelUp,
+            'awardedXp' => $xpAwarded,
+            'awardType' => 'QUIZ_COMPLETED',
         ];
 
-        // 🧯 Rétro-compat (si tu as du front qui lit encore ces clés)
-        $result['xp'] = $xpAwarded; // ancien: xp
-        $result['xpPotential'] = $xpPotential; // utile debug UI si tu veux afficher "XP potentiel"
+        $result['xp'] = $xpAwarded;
+        $result['xpPotential'] = $xpPotential;
         $result['xpAwardedNow'] = ($xpAwarded > 0);
         $result['cardRewardUnlocked'] = $cardRewarded;
         $result['cardRewardId'] = $cardId > 0 ? $cardId : null;
 
         return $result;
+    }
+
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
     }
 }

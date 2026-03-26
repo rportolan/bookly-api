@@ -57,9 +57,11 @@ final class ChaptersController
             throw new HttpException(404, 'NOT_FOUND', ['bookId' => $bookId], 'Not Found');
         }
 
-        // ✅ XP + unlock cards
+        $progressService = new ProgressService();
+        $progress = $progressService->snapshot($userId);
+
         try {
-            (new ProgressService())->award($userId, 'CHAPTER_ADDED', 0, [
+            $progress = $progressService->award($userId, 'CHAPTER_ADDED', 0, [
                 'userBookId' => $bookId,
                 'chapterId' => (int)($row['id'] ?? 0),
             ]);
@@ -67,7 +69,14 @@ final class ChaptersController
             error_log('[BOOKLY][XP] award CHAPTER_ADDED failed: ' . $e->getMessage());
         }
 
-        Response::created($this->mapRow($row));
+        Response::created([
+            ...$this->mapRow($row),
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $progress['levelUp'] ?? $progressService->buildLevelUpPayload(
+                $progressService->snapshot($userId),
+                $progressService->snapshot($userId)
+            ),
+        ]);
     }
 
     public function update(array $params): void
@@ -128,6 +137,19 @@ final class ChaptersController
         }
 
         Response::ok(['deleted' => true]);
+    }
+
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
     }
 
     private function mapRow(array $r): array

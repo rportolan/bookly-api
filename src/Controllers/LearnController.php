@@ -16,10 +16,6 @@ final class LearnController
         private LearnRepository $repo = new LearnRepository()
     ) {}
 
-    /**
-     * GET /v1/learn/books
-     * Return user's books for Learn page dropdown.
-     */
     public function books(): void
     {
         $uid = Auth::requireAuth();
@@ -28,9 +24,6 @@ final class LearnController
         Response::ok(['books' => $books]);
     }
 
-    /**
-     * GET /v1/learn/deck?userBookId=123&mode=mix|vocab|quotes&search=...
-     */
     public function deck(): void
     {
         $uid = Auth::requireAuth();
@@ -50,7 +43,6 @@ final class LearnController
 
         $search = trim($search);
         if (mb_strlen($search) > 120) {
-            // garde-fou simple (évite les payloads énormes)
             $search = mb_substr($search, 0, 120);
         }
 
@@ -64,9 +56,6 @@ final class LearnController
         ]);
     }
 
-    /**
-     * POST /v1/learn/session/complete
-     */
     public function completeSession(): void
     {
         $uid = Auth::requireAuth();
@@ -80,32 +69,29 @@ final class LearnController
         $known = (int)($body['known'] ?? 0);
         $again = (int)($body['again'] ?? 0);
 
-        // Normalisation mode
         $allowedModes = ['mix', 'vocab', 'quotes'];
         if (!in_array($mode, $allowedModes, true)) {
             $mode = 'mix';
         }
 
-        // clamp
         $total = max(0, min(200, $total));
         $known = max(0, min(200, $known));
         $again = max(0, min(200, $again));
 
-        // anti-cheat: vérifier ownership si userBookId ciblé
         if ($userBookId > 0 && !$this->repo->userOwnsUserBook($uid, $userBookId)) {
             throw new HttpException(403, 'FORBIDDEN', [], 'Forbidden');
         }
 
-        // XP MVP
         $xp = ($total > 0) ? (5 + $known) : 0;
         if ($xp > 30) $xp = 30;
 
-        $snapshot = null;
+        $ps = new ProgressService();
+        $before = $ps->snapshot($uid);
+        $after = $before;
 
         if ($xp > 0) {
             try {
-                $ps = new ProgressService();
-                $snapshot = $ps->award($uid, 'LEARN_SESSION_DONE', $xp, [
+                $after = $ps->award($uid, 'LEARN_SESSION_DONE', $xp, [
                     'sessionId'  => $sessionId,
                     'userBookId' => $userBookId,
                     'mode'       => $mode,
@@ -115,13 +101,32 @@ final class LearnController
                 ]);
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][XP] award LEARN_SESSION_DONE failed: ' . $e->getMessage());
+                $after = $ps->snapshot($uid);
             }
         }
+
+        $levelUp = $after['levelUp'] ?? $ps->buildLevelUpPayload($before, $after);
 
         Response::ok([
             'rewarded'  => ($xp > 0),
             'xpAwarded' => $xp,
-            'progress'  => $snapshot,
+            'progress'  => $this->onlyProgressSnapshot($after),
+            'levelUp'   => $levelUp,
+            'awardedXp' => $xp,
+            'awardType' => 'LEARN_SESSION_DONE',
         ]);
+    }
+
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int)($progress['xp'] ?? 0),
+            'level' => (int)($progress['level'] ?? 1),
+            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int)($progress['progressPct'] ?? 0),
+            'xpToNext' => (int)($progress['xpToNext'] ?? 0),
+            'levelXp' => (int)($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
     }
 }
