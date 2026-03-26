@@ -17,7 +17,7 @@ final class BooksController
     {
         $userId = Auth::requireAuth();
 
-        $q = Request::query('q', '');
+        $q      = Request::query('q', '');
         $status = Request::query('status', 'all');
 
         $repo = new BookRepository();
@@ -36,7 +36,7 @@ final class BooksController
         }
 
         $repo = new BookRepository();
-        $row = $repo->findOneForUser($userId, $id);
+        $row  = $repo->findOneForUser($userId, $id);
 
         if (!$row) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
@@ -48,9 +48,9 @@ final class BooksController
     public function store(): void
     {
         $userId = Auth::requireAuth();
-        $body = Request::json();
+        $body   = Request::json();
 
-        $title = trim((string)($body['title'] ?? ''));
+        $title  = trim((string)($body['title']  ?? ''));
         $author = trim((string)($body['author'] ?? ''));
 
         if ($title === '' || $author === '') {
@@ -63,13 +63,13 @@ final class BooksController
         }
 
         $repo = new BookRepository();
-        $row = $repo->createForUser($userId, $body);
+        $row  = $repo->createForUser($userId, $body);
 
         try {
             (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
-                'userBookId' => (int)($row['id'] ?? 0),
-                'bookId' => (int)($row['bookId'] ?? 0),
-                'title' => (string)($row['title'] ?? ''),
+                'userBookId' => (int)($row['id']     ?? 0),
+                'bookId'     => (int)($row['bookId'] ?? 0),
+                'title'      => (string)($row['title'] ?? ''),
             ]);
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award BOOK_CREATED failed: ' . $e->getMessage());
@@ -103,18 +103,17 @@ final class BooksController
         // ✅ Award ANALYSIS_ADDED once per book when it becomes non-empty
         try {
             $beforeAnalysis = trim((string)($before['analysis_work'] ?? ''));
-            $afterAnalysis = trim((string)($row['analysis_work'] ?? ''));
+            $afterAnalysis  = trim((string)($row['analysis_work']    ?? ''));
 
-            $becameNonEmpty = ($beforeAnalysis === '' && $afterAnalysis !== '');
-            if ($becameNonEmpty) {
-                $pr = new ProgressRepository();
+            if ($beforeAnalysis === '' && $afterAnalysis !== '') {
+                $pr      = new ProgressRepository();
                 $already = $pr->hasEventMeta($userId, 'ANALYSIS_ADDED', 'userBookId', (int)$id);
 
                 if (!$already) {
                     (new ProgressService())->award($userId, 'ANALYSIS_ADDED', 0, [
                         'userBookId' => (int)$id,
-                        'bookId' => (int)($row['bookId'] ?? 0),
-                        'title' => (string)($row['title'] ?? ''),
+                        'bookId'     => (int)($row['bookId'] ?? 0),
+                        'title'      => (string)($row['title'] ?? ''),
                     ]);
                 }
             }
@@ -135,7 +134,7 @@ final class BooksController
         }
 
         $repo = new BookRepository();
-        $ok = $repo->deleteForUser($userId, $id);
+        $ok   = $repo->deleteForUser($userId, $id);
 
         if (!$ok) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
@@ -146,9 +145,9 @@ final class BooksController
 
     public function updateProgress(array $params): void
     {
-        $userId = Auth::requireAuth();
-
+        $userId     = Auth::requireAuth();
         $userBookId = (int)($params['id'] ?? 0);
+
         if ($userBookId <= 0) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'id'], 'Invalid book id');
         }
@@ -169,43 +168,80 @@ final class BooksController
         }
 
         $progressPages = (int)$body['progressPages'];
-        $status = trim((string)$body['status']);
+        $status        = trim((string)$body['status']);
 
         $allowed = ['À lire', 'En cours', 'Terminé', 'Abandonné', 'En pause'];
         if (!in_array($status, $allowed, true)) {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'status', 'allowed' => $allowed], 'Invalid status');
         }
 
-        $repo = new BookRepository();
+        $repo    = new BookRepository();
         $updated = $repo->updateProgress($userId, $userBookId, $progressPages, $status);
 
         if (!$updated) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $userBookId], 'Not Found');
         }
 
-        Response::ok($this->mapRow($updated));
+        // ✅ Award XP pages lues + BOOK_DONE si statut = Terminé
+        $progress = null;
+        try {
+            $ps = new ProgressService();
+
+            // Pages lues (delta depuis last snapshot — idempotence assurée par la logique métier)
+            if ($progressPages > 0) {
+                $progress = $ps->award($userId, 'PAGES_READ', 0, [
+                    'userBookId' => $userBookId,
+                    'pages'      => $progressPages,
+                ]);
+            }
+
+            // Bonus livre terminé
+            if ($status === 'Terminé') {
+                $pr      = new ProgressRepository();
+                $already = $pr->hasEventMeta($userId, 'BOOK_DONE', 'userBookId', $userBookId);
+                if (!$already) {
+                    $progress = $ps->award($userId, 'BOOK_DONE', 0, [
+                        'userBookId' => $userBookId,
+                    ]);
+                }
+            }
+
+            if ($progress === null) {
+                $progress = $ps->snapshot($userId);
+            }
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][XP] award updateProgress failed: ' . $e->getMessage());
+        }
+
+        // ✅ Retourner le book + le progress (pour la détection level-up côté front)
+        $result = $this->mapRow($updated);
+        if ($progress !== null) {
+            $result['progress'] = $progress;
+        }
+
+        Response::ok($result);
     }
 
     private function mapRow(array $r): array
     {
         return [
-            'id' => (int)$r['id'],
-            'bookId' => (int)$r['bookId'],
-            'title' => (string)($r['title'] ?? ''),
-            'author' => (string)($r['author'] ?? ''),
-            'genre' => $r['genre'] ?? null,
-            'pages' => (int)($r['pages'] ?? 0),
+            'id'            => (int)$r['id'],
+            'bookId'        => (int)$r['bookId'],
+            'title'         => (string)($r['title']    ?? ''),
+            'author'        => (string)($r['author']   ?? ''),
+            'genre'         => $r['genre']              ?? null,
+            'pages'         => (int)($r['pages']        ?? 0),
             'progressPages' => (int)($r['progress_pages'] ?? 0),
-            'status' => (string)($r['status'] ?? 'À lire'),
-            'startedAt' => $r['started_at'] ?? null,
-            'finishedAt' => $r['finished_at'] ?? null,
-            'publisher' => $r['publisher'] ?? null,
-            'rating' => isset($r['rating']) && $r['rating'] !== null ? (float)$r['rating'] : null,
-            'summary' => $r['summary'] ?? null,
-            'analysisWork' => $r['analysis_work'] ?? null,
-            'coverUrl' => $r['cover_url'] ?? null,
-            'createdAt' => $r['created_at'] ?? null,
-            'updatedAt' => $r['updated_at'] ?? null,
+            'status'        => (string)($r['status']   ?? 'À lire'),
+            'startedAt'     => $r['started_at']         ?? null,
+            'finishedAt'    => $r['finished_at']        ?? null,
+            'publisher'     => $r['publisher']          ?? null,
+            'rating'        => isset($r['rating']) && $r['rating'] !== null ? (float)$r['rating'] : null,
+            'summary'       => $r['summary']            ?? null,
+            'analysisWork'  => $r['analysis_work']      ?? null,
+            'coverUrl'      => $r['cover_url']          ?? null,
+            'createdAt'     => $r['created_at']         ?? null,
+            'updatedAt'     => $r['updated_at']         ?? null,
         ];
     }
 }

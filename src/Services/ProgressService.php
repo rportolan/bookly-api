@@ -22,16 +22,16 @@ final class ProgressService
     ];
 
     private array $xpRewards = [
-        'BOOK_CREATED' => 80,
-        'QUOTE_CREATED' => 25,
-        'VOCAB_CREATED' => 20,
-        'CHAPTER_ADDED' => 20,
-        'ANALYSIS_ADDED' => 60,
-        'LEARN_SESSION_DONE' => 60,
-        'PAGES_READ' => 2,
-        'BOOK_DONE' => 150,
-        'STREAK_DAY' => 40,
-        'QUIZ_COMPLETED' => 50,
+        'BOOK_CREATED'         => 80,
+        'QUOTE_CREATED'        => 25,
+        'VOCAB_CREATED'        => 20,
+        'CHAPTER_ADDED'        => 20,
+        'ANALYSIS_ADDED'       => 60,
+        'LEARN_SESSION_DONE'   => 60,
+        'PAGES_READ'           => 2,
+        'BOOK_DONE'            => 150,
+        'STREAK_DAY'           => 40,
+        'QUIZ_COMPLETED'       => 50,
         'DAILY_GOAL_COMPLETED' => 10,
     ];
 
@@ -49,39 +49,50 @@ final class ProgressService
         }
 
         if ($delta === 0) {
-            // même sans xp, on check les cartes (utile si certains triggers passent par award sans delta)
             (new CardService())->checkUnlocks($userId);
             return $this->snapshot($userId);
         }
 
+        // ✅ Capturer le niveau AVANT l'ajout d'XP pour détecter le level-up
+        $xpBefore    = $this->progressRepo->getUserXp($userId);
+        $levelBefore = $this->computeLevel($xpBefore);
+
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
         $this->progressRepo->addXpToUser($userId, $delta);
 
-        // 🔥 cartes
         (new CardService())->checkUnlocks($userId);
 
-        return $this->snapshot($userId);
+        return $this->snapshot($userId, $levelBefore);
     }
 
-    public function snapshot(int $userId): array
+    /**
+     * @param int|null $previousLevel  Niveau avant l'award. Si fourni et inférieur au nouveau niveau,
+     *                                  le snapshot contiendra leveledUp=true et previousLevel.
+     */
+    public function snapshot(int $userId, ?int $previousLevel = null): array
     {
-        $xp = $this->progressRepo->getUserXp($userId);
+        $xp    = $this->progressRepo->getUserXp($userId);
         $level = $this->computeLevel($xp);
         $title = $this->computeTitle($level);
 
-        $minXp = $this->getLevelMinXp($level);
+        $minXp     = $this->getLevelMinXp($level);
         $nextMinXp = $this->getLevelMinXp($level + 1);
 
         $xpThisLevel = max(0, $xp - $minXp);
-        $xpToNext = max(0, $nextMinXp - $xp);
-        $span = max(1, $nextMinXp - $minXp);
+        $xpToNext    = max(0, $nextMinXp - $xp);
+        $span        = max(1, $nextMinXp - $minXp);
+
+        $leveledUp = $previousLevel !== null && $level > $previousLevel;
 
         return [
-            'xp' => $xp,
-            'level' => $level,
-            'title' => $title,
-            'progressPct' => (int)round(($xpThisLevel / $span) * 100),
-            'xpToNext' => $xpToNext,
+            'xp'            => $xp,
+            'level'         => $level,
+            'title'         => $title,
+            'progressPct'   => (int)round(($xpThisLevel / $span) * 100),
+            'xpToNext'      => $xpToNext,
+            // ✅ Toujours présents — le front peut toujours les lire
+            'leveledUp'     => $leveledUp,
+            'previousLevel' => $leveledUp ? $previousLevel : $level,
         ];
     }
 
