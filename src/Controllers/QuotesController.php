@@ -76,6 +76,8 @@ final class QuotesController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'awardedXp' => (int)($progress['awardedXp'] ?? 0),
+            'awardType' => (string)($progress['awardType'] ?? 'QUOTE_CREATED'),
         ]);
     }
 

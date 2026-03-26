@@ -76,6 +76,8 @@ final class ChaptersController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'awardedXp' => (int)($progress['awardedXp'] ?? 0),
+            'awardType' => (string)($progress['awardType'] ?? 'CHAPTER_ADDED'),
         ]);
     }
 

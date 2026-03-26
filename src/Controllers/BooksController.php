@@ -85,6 +85,8 @@ final class BooksController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'awardedXp' => (int)($progress['awardedXp'] ?? 0),
+            'awardType' => (string)($progress['awardType'] ?? 'BOOK_CREATED'),
         ]);
     }
 
@@ -146,6 +148,8 @@ final class BooksController
             ...$this->mapRow($row),
             'progress' => $this->onlyProgressSnapshot($afterProgress),
             'levelUp' => $levelUp,
+            'awardedXp' => (int)($afterProgress['awardedXp'] ?? 0),
+            'awardType' => (string)($afterProgress['awardType'] ?? 'ANALYSIS_ADDED'),
         ]);
     }
 
@@ -256,6 +260,8 @@ final class BooksController
             ...$this->mapRow($updated),
             'progress' => $this->onlyProgressSnapshot($afterProgress),
             'levelUp' => $levelUp,
+            'awardedXp' => (int)($afterProgress['awardedXp'] ?? 0),
+            'awardType' => (string)($afterProgress['awardType'] ?? 'BOOK_DONE'),
         ]);
     }
 
