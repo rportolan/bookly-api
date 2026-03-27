@@ -10,7 +10,9 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\GoogleBooksCacheRepository;
 use App\Repositories\BookRepository;
+use App\Repositories\ProgressRepository;
 use App\Services\GoogleBooksClient;
+use App\Services\ProgressService;
 use App\Services\TextSanitizer;
 
 final class GoogleBooksController
@@ -75,7 +77,30 @@ final class GoogleBooksController
         $repo = new BookRepository();
 
         $catalogBookId = $repo->upsertCatalogBookFromGoogle($payload);
+
+        // ✅ On détecte si c'est une vraie création ou un livre déjà existant
+        $isNewUserBook = !$repo->userBookExists($userId, $catalogBookId);
+
         $row = $repo->createUserBookIfNotExists($userId, $catalogBookId, $payload);
+
+        // ✅ XP + déblocage de cartes — uniquement si c'est une nouvelle entrée
+        if ($isNewUserBook) {
+            try {
+                $userBookId = (int)($row['id'] ?? 0);
+                $pr = new ProgressRepository();
+                $already = $pr->hasEventMeta($userId, 'BOOK_CREATED', 'userBookId', $userBookId);
+
+                if (!$already) {
+                    (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
+                        'userBookId' => $userBookId,
+                        'bookId'     => $catalogBookId,
+                        'title'      => (string)($row['title'] ?? ''),
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                error_log('[BOOKLY][XP] award BOOK_CREATED (google import) failed: ' . $e->getMessage());
+            }
+        }
 
         Response::created($this->mapUserBookRow($row));
     }
@@ -143,7 +168,7 @@ final class GoogleBooksController
             'authors' => array_values(array_map('strval', $authors)),
             'publisher' => $publisher,
             'pages' => $pageCount,
-            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null, // ✅ force https
+            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null,
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
             'publishedDate' => $info['publishedDate'] ?? null,
@@ -193,18 +218,13 @@ final class GoogleBooksController
             'genre' => $genre,
             'pages' => isset($info['pageCount']) ? (int)$info['pageCount'] : 0,
             'publisher' => $info['publisher'] ?? null,
-            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null, // ✅ force https
+            'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null,
             'summary' => $summary,
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
         ];
     }
 
-    /**
-     * Google renvoie parfois des catégories longues du style:
-     * "Fiction / Fantasy / Epic"
-     * => On veut "Fantasy" (genre principal lisible).
-     */
     private function simplifyGenre(mixed $categories): ?string
     {
         if (!is_array($categories) || count($categories) === 0) return null;

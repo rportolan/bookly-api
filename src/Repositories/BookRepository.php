@@ -68,6 +68,22 @@ final class BookRepository
     }
 
     /**
+     * ✅ NOUVEAU : vérifie si un user_book existe déjà pour cet utilisateur et ce livre catalogue.
+     * Utilisé par GoogleBooksController pour savoir si l'import est une vraie création.
+     */
+    public function userBookExists(int $userId, int $catalogBookId): bool
+    {
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare("
+            SELECT id FROM user_books
+            WHERE user_id = :uid AND book_id = :bid
+            LIMIT 1
+        ");
+        $stmt->execute(['uid' => $userId, 'bid' => $catalogBookId]);
+        return (bool)$stmt->fetch();
+    }
+
+    /**
      * Création MANUELLE (existant)
      * -> on insert books + user_books
      * -> maintenant on accepte aussi googleVolumeId/isbn si présent
@@ -258,7 +274,7 @@ final class BookRepository
     }
 
     /* -------------------------------------------------------
-       ✅ NOUVEAU : import Google Books
+       ✅ Import Google Books
     ------------------------------------------------------- */
 
     public function findCatalogByGoogleVolumeId(string $googleVolumeId): ?array
@@ -302,7 +318,6 @@ final class BookRepository
         if ($googleId) {
             $existing = $this->findCatalogByGoogleVolumeId((string)$googleId);
             if ($existing) {
-                // on update quelques champs “safe”
                 $this->updateCatalogFromGoogle((int)$existing['id'], $payload);
                 return (int)$existing['id'];
             }
@@ -311,7 +326,6 @@ final class BookRepository
         if ($isbn13) {
             $existing = $this->findCatalogByIsbn13((string)$isbn13);
             if ($existing) {
-                // si on avait pas googleId avant, on le rattache
                 $this->updateCatalogFromGoogle((int)$existing['id'], $payload);
                 return (int)$existing['id'];
             }
@@ -371,7 +385,7 @@ final class BookRepository
     }
 
     /**
-     * Crée le lien user_books si pas déjà existant (uq_user_books_user_book)
+     * Crée le lien user_books si pas déjà existant
      * Retourne la row join (comme findOneForUser)
      */
     public function createUserBookIfNotExists(int $userId, int $catalogBookId, array $payload): array
