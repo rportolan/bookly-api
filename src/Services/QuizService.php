@@ -75,6 +75,9 @@ final class QuizService
         $before = $this->progressService->snapshot($userId);
         $progress = $before;
 
+        $cardService = new CardService();
+        $newUnlockedCards = [];
+
         try {
             $already = $this->progressRepo->hasEventMeta($userId, 'QUIZ_COMPLETED', 'quizId', $quizId);
 
@@ -86,9 +89,14 @@ final class QuizService
                     'title' => (string)($meta['title'] ?? ''),
                 ]);
                 $xpAwarded = $xpPotential;
+                $newUnlockedCards = $this->mergeUnlockedCards(
+                    $newUnlockedCards,
+                    $progress['cardUnlock']['cards'] ?? []
+                );
             } else {
                 $progress = $this->progressService->snapshot($userId);
-                (new CardService())->checkUnlocks($userId);
+                $extraUnlocked = $cardService->checkUnlocks($userId);
+                $newUnlockedCards = $this->mergeUnlockedCards($newUnlockedCards, $extraUnlocked);
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award QUIZ_COMPLETED failed: ' . $e->getMessage());
@@ -100,9 +108,10 @@ final class QuizService
 
         if ($cardId > 0 && $scorePct >= 70) {
             try {
-                if (!$this->cardRepo->userHas($userId, $cardId)) {
-                    $this->cardRepo->unlock($userId, $cardId);
+                $rewardCard = $cardService->unlockById($userId, $cardId);
+                if ($rewardCard) {
                     $cardRewarded = true;
+                    $newUnlockedCards = $this->mergeUnlockedCards($newUnlockedCards, [$rewardCard]);
                 }
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][cards] card_reward unlock failed: ' . $e->getMessage());
@@ -123,6 +132,10 @@ final class QuizService
             ],
             'progress' => $this->onlyProgressSnapshot($progress),
             'levelUp' => $levelUp,
+            'cardUnlock' => [
+                'happened' => count($newUnlockedCards) > 0,
+                'cards' => array_values($newUnlockedCards),
+            ],
             'awardedXp' => $xpAwarded,
             'awardType' => 'QUIZ_COMPLETED',
         ];
@@ -134,6 +147,20 @@ final class QuizService
         $result['cardRewardId'] = $cardId > 0 ? $cardId : null;
 
         return $result;
+    }
+
+    private function mergeUnlockedCards(array $base, array $incoming): array
+    {
+        $map = [];
+        foreach ($base as $card) {
+            $id = (int)($card['id'] ?? 0);
+            if ($id > 0) $map[$id] = $card;
+        }
+        foreach ($incoming as $card) {
+            $id = (int)($card['id'] ?? 0);
+            if ($id > 0) $map[$id] = $card;
+        }
+        return array_values($map);
     }
 
     private function onlyProgressSnapshot(array $progress): array

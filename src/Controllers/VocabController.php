@@ -83,6 +83,7 @@ final class VocabController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'cardUnlock' => $progress['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => (int)($progress['awardedXp'] ?? 0),
             'awardType' => (string)($progress['awardType'] ?? 'VOCAB_CREATED'),
         ]);
@@ -185,6 +186,14 @@ final class VocabController
             'xpToNext' => (int)($progress['xpToNext'] ?? 0),
             'levelXp' => (int)($progress['levelXp'] ?? 0),
             'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
+    private function emptyCardUnlock(): array
+    {
+        return [
+            'happened' => false,
+            'cards' => [],
         ];
     }
 

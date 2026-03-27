@@ -45,35 +45,37 @@ final class ProgressService
     public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
         $before = $this->snapshot($userId);
+        $cardService = new CardService();
 
         if ($delta === 0) {
             $delta = $this->computeDeltaFromType($type, $meta);
         }
 
         if ($delta === 0) {
-            (new CardService())->checkUnlocks($userId);
+            $newCards = $cardService->checkUnlocks($userId);
             $after = $this->snapshot($userId);
 
             return $this->attachAwardMeta(
                 $after,
                 $this->buildLevelUpPayload($before, $after),
                 $type,
-                0
+                0,
+                $this->buildCardUnlockPayload($newCards)
             );
         }
 
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
         $this->progressRepo->addXpToUser($userId, $delta);
 
-        (new CardService())->checkUnlocks($userId);
-
+        $newCards = $cardService->checkUnlocks($userId);
         $after = $this->snapshot($userId);
 
         return $this->attachAwardMeta(
             $after,
             $this->buildLevelUpPayload($before, $after),
             $type,
-            $delta
+            $delta,
+            $this->buildCardUnlockPayload($newCards)
         );
     }
 
@@ -118,13 +120,27 @@ final class ProgressService
         ];
     }
 
-    private function attachAwardMeta(array $snapshot, array $levelUp, string $type, int $delta): array
-    {
+    private function attachAwardMeta(
+        array $snapshot,
+        array $levelUp,
+        string $type,
+        int $delta,
+        array $cardUnlock
+    ): array {
         return [
             ...$snapshot,
             'awardedXp' => $delta,
             'awardType' => $type,
             'levelUp' => $levelUp,
+            'cardUnlock' => $cardUnlock,
+        ];
+    }
+
+    private function buildCardUnlockPayload(array $cards): array
+    {
+        return [
+            'happened' => count($cards) > 0,
+            'cards' => array_values($cards),
         ];
     }
 

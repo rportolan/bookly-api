@@ -76,6 +76,7 @@ final class ChaptersController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'cardUnlock' => $progress['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => (int)($progress['awardedXp'] ?? 0),
             'awardType' => (string)($progress['awardType'] ?? 'CHAPTER_ADDED'),
         ]);
@@ -151,6 +152,14 @@ final class ChaptersController
             'xpToNext' => (int)($progress['xpToNext'] ?? 0),
             'levelXp' => (int)($progress['levelXp'] ?? 0),
             'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
+    private function emptyCardUnlock(): array
+    {
+        return [
+            'happened' => false,
+            'cards' => [],
         ];
     }
 

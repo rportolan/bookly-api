@@ -9,6 +9,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\BookRepository;
 use App\Repositories\ProgressRepository;
+use App\Services\CardService;
 use App\Services\ProgressService;
 
 final class BooksController
@@ -85,6 +86,7 @@ final class BooksController
                 $progressService->snapshot($userId),
                 $progressService->snapshot($userId)
             ),
+            'cardUnlock' => $progress['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => (int)($progress['awardedXp'] ?? 0),
             'awardType' => (string)($progress['awardType'] ?? 'BOOK_CREATED'),
         ]);
@@ -133,13 +135,16 @@ final class BooksController
                     ]);
                 } else {
                     $afterProgress = $progressService->snapshot($userId);
+                    $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
                 }
             } else {
                 $afterProgress = $progressService->snapshot($userId);
+                $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award ANALYSIS_ADDED failed: ' . $e->getMessage());
             $afterProgress = $progressService->snapshot($userId);
+            $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
         }
 
         $levelUp = $afterProgress['levelUp'] ?? $progressService->buildLevelUpPayload($beforeProgress, $afterProgress);
@@ -148,6 +153,7 @@ final class BooksController
             ...$this->mapRow($row),
             'progress' => $this->onlyProgressSnapshot($afterProgress),
             'levelUp' => $levelUp,
+            'cardUnlock' => $afterProgress['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => (int)($afterProgress['awardedXp'] ?? 0),
             'awardType' => (string)($afterProgress['awardType'] ?? 'ANALYSIS_ADDED'),
         ]);
@@ -245,13 +251,16 @@ final class BooksController
                     ]);
                 } else {
                     $afterProgress = $progressService->snapshot($userId);
+                    $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
                 }
             } else {
                 $afterProgress = $progressService->snapshot($userId);
+                $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][XP] award BOOK_DONE failed: ' . $e->getMessage());
             $afterProgress = $progressService->snapshot($userId);
+            $afterProgress['cardUnlock'] = $this->emptyCardUnlock();
         }
 
         $levelUp = $afterProgress['levelUp'] ?? $progressService->buildLevelUpPayload($beforeProgress, $afterProgress);
@@ -260,6 +269,7 @@ final class BooksController
             ...$this->mapRow($updated),
             'progress' => $this->onlyProgressSnapshot($afterProgress),
             'levelUp' => $levelUp,
+            'cardUnlock' => $afterProgress['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => (int)($afterProgress['awardedXp'] ?? 0),
             'awardType' => (string)($afterProgress['awardType'] ?? 'BOOK_DONE'),
         ]);
@@ -275,6 +285,14 @@ final class BooksController
             'xpToNext' => (int)($progress['xpToNext'] ?? 0),
             'levelXp' => (int)($progress['levelXp'] ?? 0),
             'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
+    private function emptyCardUnlock(): array
+    {
+        return [
+            'happened' => false,
+            'cards' => [],
         ];
     }
 

@@ -15,16 +15,25 @@ final class CardService
         $this->repo = new CardRepository();
     }
 
-    public function checkUnlocks(int $userId): void
+    /**
+     * Retourne UNIQUEMENT les cartes nouvellement débloquées pendant cet appel.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function checkUnlocks(int $userId): array
     {
         $cards = $this->repo->all();
         $stats = (new QuestRepository())->statsForUser($userId);
         $level = (new ProgressService())->snapshot($userId)['level'];
 
-        foreach ($cards as $card) {
-            $cardId = (int)$card['id'];
+        $newlyUnlocked = [];
 
-            // déjà possédée (unclaimed/claimed)
+        foreach ($cards as $card) {
+            $cardId = (int)($card['id'] ?? 0);
+            if ($cardId <= 0) {
+                continue;
+            }
+
             if ($this->repo->userHas($userId, $cardId)) {
                 continue;
             }
@@ -32,7 +41,7 @@ final class CardService
             $need = (int)($card['unlock_value'] ?? 0);
             $unlock = false;
 
-            switch ((string)$card['unlock_type']) {
+            switch ((string)($card['unlock_type'] ?? '')) {
                 case 'LEVEL_REACHED':
                     $unlock = $level >= $need;
                     break;
@@ -74,9 +83,34 @@ final class CardService
                     break;
             }
 
-            if ($unlock) {
-                $this->repo->unlock($userId, $cardId);
+            if (!$unlock) {
+                continue;
+            }
+
+            $unlocked = $this->unlockById($userId, $cardId);
+            if ($unlocked) {
+                $newlyUnlocked[] = $unlocked;
             }
         }
+
+        return $newlyUnlocked;
+    }
+
+    /**
+     * Débloque explicitement une carte si elle n'est pas encore possédée.
+     */
+    public function unlockById(int $userId, int $cardId): ?array
+    {
+        if ($cardId <= 0) {
+            return null;
+        }
+
+        if ($this->repo->userHas($userId, $cardId)) {
+            return null;
+        }
+
+        $this->repo->unlock($userId, $cardId);
+
+        return $this->repo->findForUser($userId, $cardId);
     }
 }

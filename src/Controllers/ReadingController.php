@@ -100,6 +100,7 @@ final class ReadingController
         $goal = (int)$this->repo->getGoalPagesPerDay($userId);
 
         $progressService = new ProgressService();
+        $cardService = new CardService();
         $beforeProgress = $progressService->snapshot($userId);
 
         $this->repo->upsertLog($userId, $today, $pages);
@@ -110,13 +111,19 @@ final class ReadingController
         $rewardedStreak = false;
         $streakDays = $this->repo->computeCurrentStreakDays($userId);
 
+        $newUnlockedCards = [];
+
         if ($crossedGoal && !$this->repo->hasDailyGoalXp($userId, $today)) {
             try {
-                $progressService->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
+                $goalProgress = $progressService->award($userId, 'DAILY_GOAL_COMPLETED', 0, [
                     'day' => $today,
                     'goal' => $goal,
                     'pages' => $pages,
                 ]);
+                $newUnlockedCards = $this->mergeUnlockedCards(
+                    $newUnlockedCards,
+                    $goalProgress['cardUnlock']['cards'] ?? []
+                );
                 $rewardedGoal = true;
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][XP] award DAILY_GOAL_COMPLETED failed: ' . $e->getMessage());
@@ -128,11 +135,15 @@ final class ReadingController
                 $pr = new ProgressRepository();
                 $already = $pr->hasEventMeta($userId, 'STREAK_DAY', 'day', $today);
                 if (!$already) {
-                    $progressService->award($userId, 'STREAK_DAY', 0, [
+                    $streakProgress = $progressService->award($userId, 'STREAK_DAY', 0, [
                         'day' => $today,
                         'pages' => $pages,
                         'streakDays' => $streakDays,
                     ]);
+                    $newUnlockedCards = $this->mergeUnlockedCards(
+                        $newUnlockedCards,
+                        $streakProgress['cardUnlock']['cards'] ?? []
+                    );
                     $rewardedStreak = true;
                 }
             } catch (\Throwable $e) {
@@ -141,7 +152,8 @@ final class ReadingController
         }
 
         try {
-            (new CardService())->checkUnlocks($userId);
+            $extraUnlocked = $cardService->checkUnlocks($userId);
+            $newUnlockedCards = $this->mergeUnlockedCards($newUnlockedCards, $extraUnlocked);
         } catch (\Throwable $e) {
             error_log('[BOOKLY][cards] checkUnlocks failed: ' . $e->getMessage());
         }
@@ -158,8 +170,27 @@ final class ReadingController
             'streakDays' => $streakDays,
             'progress' => $afterProgress,
             'levelUp' => $levelUp,
+            'cardUnlock' => [
+                'happened' => count($newUnlockedCards) > 0,
+                'cards' => array_values($newUnlockedCards),
+            ],
             'awardedXp' => max(0, (int)$afterProgress['xp'] - (int)$beforeProgress['xp']),
+            'awardType' => 'READING_LOG_UPDATED',
         ]);
+    }
+
+    private function mergeUnlockedCards(array $base, array $incoming): array
+    {
+        $map = [];
+        foreach ($base as $card) {
+            $id = (int)($card['id'] ?? 0);
+            if ($id > 0) $map[$id] = $card;
+        }
+        foreach ($incoming as $card) {
+            $id = (int)($card['id'] ?? 0);
+            if ($id > 0) $map[$id] = $card;
+        }
+        return array_values($map);
     }
 
     private function isDate(string $s): bool

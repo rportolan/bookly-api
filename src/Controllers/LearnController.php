@@ -102,7 +102,10 @@ final class LearnController
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][XP] award LEARN_SESSION_DONE failed: ' . $e->getMessage());
                 $after = $ps->snapshot($uid);
+                $after['cardUnlock'] = $this->emptyCardUnlock();
             }
+        } else {
+            $after['cardUnlock'] = $this->emptyCardUnlock();
         }
 
         $levelUp = $after['levelUp'] ?? $ps->buildLevelUpPayload($before, $after);
@@ -112,6 +115,7 @@ final class LearnController
             'xpAwarded' => $xp,
             'progress'  => $this->onlyProgressSnapshot($after),
             'levelUp'   => $levelUp,
+            'cardUnlock' => $after['cardUnlock'] ?? $this->emptyCardUnlock(),
             'awardedXp' => $xp,
             'awardType' => 'LEARN_SESSION_DONE',
         ]);
@@ -127,6 +131,14 @@ final class LearnController
             'xpToNext' => (int)($progress['xpToNext'] ?? 0),
             'levelXp' => (int)($progress['levelXp'] ?? 0),
             'levelXpSpan' => (int)($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
+    private function emptyCardUnlock(): array
+    {
+        return [
+            'happened' => false,
+            'cards' => [],
         ];
     }
 }
