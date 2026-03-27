@@ -70,7 +70,6 @@ final class GoogleBooksController
 
         $payload = $this->mapGoogleVolumeToBookPayload($volume);
 
-        // overrides user-related
         $payload['status'] = $body['status'] ?? 'À lire';
         $payload['progressPages'] = isset($body['progressPages']) ? (int)$body['progressPages'] : 0;
 
@@ -78,20 +77,24 @@ final class GoogleBooksController
 
         $catalogBookId = $repo->upsertCatalogBookFromGoogle($payload);
 
-        // ✅ On détecte si c'est une vraie création ou un livre déjà existant
         $isNewUserBook = !$repo->userBookExists($userId, $catalogBookId);
 
         $row = $repo->createUserBookIfNotExists($userId, $catalogBookId, $payload);
 
-        // ✅ XP + déblocage de cartes — uniquement si c'est une nouvelle entrée
+        $response = $this->mapUserBookRow($row);
+
+        // On garde les récompenses éventuelles pour les renvoyer au front
+        $rewardPayload = null;
+
         if ($isNewUserBook) {
             try {
                 $userBookId = (int)($row['id'] ?? 0);
+
                 $pr = new ProgressRepository();
                 $already = $pr->hasEventMeta($userId, 'BOOK_CREATED', 'userBookId', $userBookId);
 
                 if (!$already) {
-                    (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
+                    $rewardPayload = (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
                         'userBookId' => $userBookId,
                         'bookId'     => $catalogBookId,
                         'title'      => (string)($row['title'] ?? ''),
@@ -102,7 +105,12 @@ final class GoogleBooksController
             }
         }
 
-        Response::created($this->mapUserBookRow($row));
+        // Fusionne la réponse livre + récompenses si présentes
+        if (is_array($rewardPayload)) {
+            $response = array_merge($response, $rewardPayload);
+        }
+
+        Response::created($response);
     }
 
     private function makeCacheKey(string $q, int $limit, string $lang, string $country): string
