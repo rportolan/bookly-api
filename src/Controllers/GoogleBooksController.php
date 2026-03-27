@@ -8,8 +8,8 @@ use App\Core\Env;
 use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
-use App\Repositories\GoogleBooksCacheRepository;
 use App\Repositories\BookRepository;
+use App\Repositories\GoogleBooksCacheRepository;
 use App\Repositories\ProgressRepository;
 use App\Services\GoogleBooksClient;
 use App\Services\ProgressService;
@@ -21,18 +21,18 @@ final class GoogleBooksController
     {
         Auth::requireAuth();
 
-        $q = trim((string)Request::query('q', ''));
+        $q = trim((string) Request::query('q', ''));
         if ($q === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'q'], 'Missing q');
         }
 
-        $limit = (int)Request::query('limit', (string)Env::get('GOOGLE_BOOKS_MAX_RESULTS', '10'));
+        $limit = (int) Request::query('limit', (string) Env::get('GOOGLE_BOOKS_MAX_RESULTS', '10'));
         $limit = max(1, min(20, $limit));
 
         $lang = Env::get('GOOGLE_BOOKS_LANG', 'fr') ?? 'fr';
         $country = Env::get('GOOGLE_BOOKS_COUNTRY', 'FR') ?? 'FR';
 
-        $cacheTtl = (int)Env::get('GOOGLE_BOOKS_CACHE_TTL_SECONDS', '604800'); // 7 jours
+        $cacheTtl = (int) (Env::get('GOOGLE_BOOKS_CACHE_TTL_SECONDS', '604800')); // 7 jours
         $cacheKey = $this->makeCacheKey($q, $limit, $lang, $country);
 
         $cacheRepo = new GoogleBooksCacheRepository();
@@ -47,7 +47,12 @@ final class GoogleBooksController
         $client = new GoogleBooksClient();
         $raw = $client->searchVolumes($q, $limit, $lang, $country);
 
-        $cacheRepo->upsert($cacheKey, $q, json_encode($raw, JSON_UNESCAPED_UNICODE), $cacheTtl);
+        $cacheRepo->upsert(
+            $cacheKey,
+            $q,
+            json_encode($raw, JSON_UNESCAPED_UNICODE),
+            $cacheTtl
+        );
 
         Response::ok($this->normalizeSearchResponse($raw, false));
     }
@@ -57,9 +62,14 @@ final class GoogleBooksController
         $userId = Auth::requireAuth();
         $body = Request::json();
 
-        $volumeId = trim((string)($body['googleVolumeId'] ?? ''));
+        $volumeId = trim((string) ($body['googleVolumeId'] ?? ''));
         if ($volumeId === '') {
-            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'googleVolumeId'], 'Missing googleVolumeId');
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'googleVolumeId'],
+                'Missing googleVolumeId'
+            );
         }
 
         $lang = Env::get('GOOGLE_BOOKS_LANG', 'fr') ?? 'fr';
@@ -70,7 +80,7 @@ final class GoogleBooksController
 
         $payload = $this->mapGoogleVolumeToBookPayload($volume);
         $payload['status'] = $body['status'] ?? 'À lire';
-        $payload['progressPages'] = isset($body['progressPages']) ? (int)$body['progressPages'] : 0;
+        $payload['progressPages'] = isset($body['progressPages']) ? (int) $body['progressPages'] : 0;
 
         $repo = new BookRepository();
 
@@ -79,46 +89,43 @@ final class GoogleBooksController
 
         $row = $repo->createUserBookIfNotExists($userId, $catalogBookId, $payload);
 
-        $response = $this->mapUserBookRow($row);
-
-        $rewardPayload = null;
+        $progressService = new ProgressService();
+        $progress = $progressService->snapshot($userId);
 
         if ($isNewUserBook) {
             try {
-                $userBookId = (int)($row['id'] ?? 0);
+                $userBookId = (int) ($row['id'] ?? 0);
 
                 $pr = new ProgressRepository();
                 $already = $pr->hasEventMeta($userId, 'BOOK_CREATED', 'userBookId', $userBookId);
 
                 if (!$already) {
-                    $rewardPayload = (new ProgressService())->award($userId, 'BOOK_CREATED', 0, [
+                    $progress = $progressService->award($userId, 'BOOK_CREATED', 0, [
                         'userBookId' => $userBookId,
-                        'bookId'     => $catalogBookId,
-                        'title'      => (string)($row['title'] ?? ''),
+                        'bookId' => $catalogBookId,
+                        'title' => (string) ($row['title'] ?? ''),
                     ]);
                 }
             } catch (\Throwable $e) {
                 error_log('[BOOKLY][XP] award BOOK_CREATED (google import) failed: ' . $e->getMessage());
+                $progress = $progressService->snapshot($userId);
             }
         }
 
-        // Important : on renvoie EXACTEMENT la forme attendue par handleLevelUpResponse
-        $response['progress'] = is_array($rewardPayload) ? ($rewardPayload['progress'] ?? null) : null;
-        $response['levelUp'] = is_array($rewardPayload)
-            ? ($rewardPayload['levelUp'] ?? ['happened' => false])
-            : ['happened' => false];
-        $response['cardUnlock'] = is_array($rewardPayload)
-            ? ($rewardPayload['cardUnlock'] ?? ['happened' => false, 'cards' => []])
-            : ['happened' => false, 'cards' => []];
-        $response['awardedXp'] = is_array($rewardPayload) ? (int)($rewardPayload['awardedXp'] ?? 0) : 0;
-        $response['awardType'] = is_array($rewardPayload) ? ($rewardPayload['awardType'] ?? 'BOOK_CREATED') : 'BOOK_CREATED';
-
-        Response::created($response);
+        Response::created([
+            ...$this->mapUserBookRow($row),
+            'progress' => $this->onlyProgressSnapshot($progress),
+            'levelUp' => $progress['levelUp'] ?? $this->emptyLevelUp(),
+            'cardUnlock' => $progress['cardUnlock'] ?? $this->emptyCardUnlock(),
+            'awardedXp' => (int) ($progress['awardedXp'] ?? 0),
+            'awardType' => (string) ($progress['awardType'] ?? 'BOOK_CREATED'),
+        ]);
     }
 
     private function makeCacheKey(string $q, int $limit, string $lang, string $country): string
     {
         $norm = $this->normalizeQuery($q);
+
         return hash('sha256', json_encode([
             'q' => $norm,
             'limit' => $limit,
@@ -144,7 +151,7 @@ final class GoogleBooksController
         return [
             'meta' => [
                 'cacheHit' => $cacheHit,
-                'totalItems' => (int)($raw['totalItems'] ?? count($items)),
+                'totalItems' => (int) ($raw['totalItems'] ?? count($items)),
             ],
             'items' => $items,
         ];
@@ -152,16 +159,19 @@ final class GoogleBooksController
 
     private function normalizeVolumeItem(array $it): array
     {
-        $id = (string)($it['id'] ?? '');
+        $id = (string) ($it['id'] ?? '');
         $info = $it['volumeInfo'] ?? [];
 
-        $title = (string)($info['title'] ?? '');
+        $title = (string) ($info['title'] ?? '');
+
         $authors = $info['authors'] ?? [];
-        if (!is_array($authors)) $authors = [];
-        $author = count($authors) ? (string)$authors[0] : '';
+        if (!is_array($authors)) {
+            $authors = [];
+        }
+        $author = count($authors) ? (string) $authors[0] : '';
 
         $publisher = $info['publisher'] ?? null;
-        $pageCount = isset($info['pageCount']) ? (int)$info['pageCount'] : 0;
+        $pageCount = isset($info['pageCount']) ? (int) $info['pageCount'] : 0;
 
         $imageLinks = $info['imageLinks'] ?? [];
         $cover = $imageLinks['thumbnail'] ?? ($imageLinks['smallThumbnail'] ?? null);
@@ -194,14 +204,25 @@ final class GoogleBooksController
         $isbn10 = null;
         $isbn13 = null;
 
-        if (!is_array($industryIdentifiers)) return [$isbn10, $isbn13];
+        if (!is_array($industryIdentifiers)) {
+            return [$isbn10, $isbn13];
+        }
 
         foreach ($industryIdentifiers as $id) {
-            if (!is_array($id)) continue;
-            $type = (string)($id['type'] ?? '');
-            $identifier = (string)($id['identifier'] ?? '');
-            if ($type === 'ISBN_10') $isbn10 = $identifier;
-            if ($type === 'ISBN_13') $isbn13 = $identifier;
+            if (!is_array($id)) {
+                continue;
+            }
+
+            $type = (string) ($id['type'] ?? '');
+            $identifier = (string) ($id['identifier'] ?? '');
+
+            if ($type === 'ISBN_10') {
+                $isbn10 = $identifier;
+            }
+
+            if ($type === 'ISBN_13') {
+                $isbn13 = $identifier;
+            }
         }
 
         return [$isbn10, $isbn13];
@@ -212,7 +233,9 @@ final class GoogleBooksController
         $info = $volume['volumeInfo'] ?? [];
 
         $authors = $info['authors'] ?? [];
-        if (!is_array($authors)) $authors = [];
+        if (!is_array($authors)) {
+            $authors = [];
+        }
 
         $imageLinks = $info['imageLinks'] ?? [];
         $cover = $imageLinks['thumbnail'] ?? ($imageLinks['smallThumbnail'] ?? null);
@@ -223,11 +246,11 @@ final class GoogleBooksController
         $summary = TextSanitizer::htmlToText($info['description'] ?? null);
 
         return [
-            'googleVolumeId' => (string)($volume['id'] ?? ''),
-            'title' => (string)($info['title'] ?? ''),
-            'author' => count($authors) ? (string)$authors[0] : '',
+            'googleVolumeId' => (string) ($volume['id'] ?? ''),
+            'title' => (string) ($info['title'] ?? ''),
+            'author' => count($authors) ? (string) $authors[0] : '',
             'genre' => $genre,
-            'pages' => isset($info['pageCount']) ? (int)$info['pageCount'] : 0,
+            'pages' => isset($info['pageCount']) ? (int) $info['pageCount'] : 0,
             'publisher' => $info['publisher'] ?? null,
             'coverUrl' => $cover ? str_replace('http://', 'https://', $cover) : null,
             'summary' => $summary,
@@ -238,24 +261,41 @@ final class GoogleBooksController
 
     private function simplifyGenre(mixed $categories): ?string
     {
-        if (!is_array($categories) || count($categories) === 0) return null;
+        if (!is_array($categories) || count($categories) === 0) {
+            return null;
+        }
 
         $raw = null;
         foreach ($categories as $c) {
-            $s = trim((string)$c);
-            if ($s !== '') { $raw = $s; break; }
+            $s = trim((string) $c);
+            if ($s !== '') {
+                $raw = $s;
+                break;
+            }
         }
-        if (!$raw) return null;
+
+        if (!$raw) {
+            return null;
+        }
 
         $parts = preg_split('/\s*\/\s*|\s*>\s*|\s*-\s*/', $raw) ?: [$raw];
-        $parts = array_values(array_filter(array_map('trim', $parts), fn($x) => $x !== ''));
+        $parts = array_values(array_filter(array_map('trim', $parts), fn ($x) => $x !== ''));
 
-        if (count($parts) === 0) return null;
+        if (count($parts) === 0) {
+            return null;
+        }
 
-        $lower = array_map(fn($p) => mb_strtolower($p), $parts);
+        $lower = array_map(fn ($p) => mb_strtolower($p), $parts);
 
         $generic = [
-            'fiction', 'nonfiction', 'non-fiction', 'general', 'général', 'books', 'literature', 'littérature',
+            'fiction',
+            'nonfiction',
+            'non-fiction',
+            'general',
+            'général',
+            'books',
+            'literature',
+            'littérature',
         ];
 
         $idxFiction = array_search('fiction', $lower, true);
@@ -275,7 +315,9 @@ final class GoogleBooksController
     private function capGenre(string $g): ?string
     {
         $g = trim($g);
-        if ($g === '') return null;
+        if ($g === '') {
+            return null;
+        }
 
         if (mb_strlen($g) > 60) {
             $g = mb_substr($g, 0, 60);
@@ -284,21 +326,53 @@ final class GoogleBooksController
         return $g;
     }
 
+    private function onlyProgressSnapshot(array $progress): array
+    {
+        return [
+            'xp' => (int) ($progress['xp'] ?? 0),
+            'level' => (int) ($progress['level'] ?? 1),
+            'title' => (string) ($progress['title'] ?? 'Lecteur novice'),
+            'progressPct' => (int) ($progress['progressPct'] ?? 0),
+            'xpToNext' => (int) ($progress['xpToNext'] ?? 0),
+            'levelXp' => (int) ($progress['levelXp'] ?? 0),
+            'levelXpSpan' => (int) ($progress['levelXpSpan'] ?? 1),
+        ];
+    }
+
+    private function emptyLevelUp(): array
+    {
+        return [
+            'happened' => false,
+            'previousLevel' => 1,
+            'newLevel' => 1,
+            'previousTitle' => 'Lecteur novice',
+            'newTitle' => 'Lecteur novice',
+        ];
+    }
+
+    private function emptyCardUnlock(): array
+    {
+        return [
+            'happened' => false,
+            'cards' => [],
+        ];
+    }
+
     private function mapUserBookRow(array $r): array
     {
         return [
-            'id' => (int)$r['id'],
-            'bookId' => (int)$r['bookId'],
-            'title' => (string)($r['title'] ?? ''),
-            'author' => (string)($r['author'] ?? ''),
+            'id' => (int) $r['id'],
+            'bookId' => (int) $r['bookId'],
+            'title' => (string) ($r['title'] ?? ''),
+            'author' => (string) ($r['author'] ?? ''),
             'genre' => $r['genre'] ?? null,
-            'pages' => (int)($r['pages'] ?? 0),
-            'progressPages' => (int)($r['progress_pages'] ?? 0),
-            'status' => (string)($r['status'] ?? 'À lire'),
+            'pages' => (int) ($r['pages'] ?? 0),
+            'progressPages' => (int) ($r['progress_pages'] ?? 0),
+            'status' => (string) ($r['status'] ?? 'À lire'),
             'startedAt' => $r['started_at'] ?? null,
             'finishedAt' => $r['finished_at'] ?? null,
             'publisher' => $r['publisher'] ?? null,
-            'rating' => isset($r['rating']) && $r['rating'] !== null ? (float)$r['rating'] : null,
+            'rating' => isset($r['rating']) && $r['rating'] !== null ? (float) $r['rating'] : null,
             'summary' => $r['summary'] ?? null,
             'analysisWork' => $r['analysis_work'] ?? null,
             'coverUrl' => $r['cover_url'] ?? null,
