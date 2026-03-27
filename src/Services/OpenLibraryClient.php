@@ -29,6 +29,17 @@ final class OpenLibraryClient
         return $this->getJson($url);
     }
 
+    public function searchByIsbn(string $isbn): array
+    {
+        $isbn = preg_replace('/[^0-9Xx]/', '', trim($isbn)) ?? '';
+        if ($isbn === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'isbn'], 'Invalid isbn');
+        }
+
+        // Open Library search classique par q=isbn
+        return $this->searchBooks('isbn:' . $isbn, 10);
+    }
+
     public function getEdition(string $editionId): array
     {
         $editionId = trim($editionId);

@@ -10,27 +10,55 @@ final class GoogleBooksClient
 {
     private string $baseUrl = 'https://www.googleapis.com/books/v1';
 
-    public function searchVolumes(string $query, int $maxResults = 10, string $lang = 'fr', string $country = 'FR'): array
-    {
+    public function searchVolumes(
+        string $query,
+        int $maxResults = 10,
+        string $lang = 'fr',
+        string $country = 'FR'
+    ): array {
         $q = trim($query);
+        if ($q === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'q'], 'Missing q');
+        }
+
         $maxResults = max(1, min(20, $maxResults));
 
         $params = [
             'q' => $q,
-            'maxResults' => (string)$maxResults,
+            'maxResults' => (string) $maxResults,
             'printType' => 'books',
             'orderBy' => 'relevance',
         ];
 
-        if ($lang) $params['langRestrict'] = strtolower($lang);
-        if ($country) $params['country'] = strtoupper($country);
+        if ($lang) {
+            $params['langRestrict'] = strtolower($lang);
+        }
+        if ($country) {
+            $params['country'] = strtoupper($country);
+        }
 
         $key = Env::get('GOOGLE_BOOKS_API_KEY', null);
-        if ($key) $params['key'] = $key;
+        if ($key) {
+            $params['key'] = $key;
+        }
 
         $url = $this->baseUrl . '/volumes?' . http_build_query($params);
 
         return $this->getJson($url);
+    }
+
+    public function searchByIsbn(
+        string $isbn,
+        int $maxResults = 10,
+        string $lang = 'fr',
+        string $country = 'FR'
+    ): array {
+        $isbn = preg_replace('/[^0-9Xx]/', '', trim($isbn)) ?? '';
+        if ($isbn === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'isbn'], 'Invalid isbn');
+        }
+
+        return $this->searchVolumes('isbn:' . $isbn, $maxResults, $lang, $country);
     }
 
     public function getVolume(string $volumeId, string $lang = 'fr', string $country = 'FR'): array
@@ -42,8 +70,12 @@ final class GoogleBooksClient
 
         $params = [];
         $key = Env::get('GOOGLE_BOOKS_API_KEY', null);
-        if ($key) $params['key'] = $key;
-        if ($country) $params['country'] = strtoupper($country);
+        if ($key) {
+            $params['key'] = $key;
+        }
+        if ($country) {
+            $params['country'] = strtoupper($country);
+        }
 
         $url = $this->baseUrl . '/volumes/' . rawurlencode($id);
         if (!empty($params)) {
@@ -55,10 +87,9 @@ final class GoogleBooksClient
 
     private function getJson(string $url): array
     {
-        $timeout = (int)Env::get('GOOGLE_BOOKS_TIMEOUT_SECONDS', '6');
+        $timeout = (int) Env::get('GOOGLE_BOOKS_TIMEOUT_SECONDS', '6');
         $timeout = max(2, min(20, $timeout));
 
-        // 1) Prefer curl
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
@@ -73,7 +104,7 @@ final class GoogleBooksClient
 
             $raw = curl_exec($ch);
             $errno = curl_errno($ch);
-            $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $err = curl_error($ch);
             curl_close($ch);
 
@@ -89,7 +120,6 @@ final class GoogleBooksClient
             return $this->decodeAndValidate($raw, $status);
         }
 
-        // 2) Fallback file_get_contents (si curl absent)
         $context = stream_context_create([
             'http' => [
                 'method' => 'GET',
@@ -103,12 +133,11 @@ final class GoogleBooksClient
             throw new HttpException(502, 'GOOGLE_BOOKS_UNREACHABLE', [], 'Google Books unreachable');
         }
 
-        // status code via $http_response_header
         $status = 200;
         if (isset($http_response_header) && is_array($http_response_header)) {
             foreach ($http_response_header as $h) {
-                if (preg_match('#HTTP/\S+\s+(\d{3})#', (string)$h, $m)) {
-                    $status = (int)$m[1];
+                if (preg_match('#HTTP/\S+\s+(\d{3})#', (string) $h, $m)) {
+                    $status = (int) $m[1];
                     break;
                 }
             }
@@ -124,8 +153,12 @@ final class GoogleBooksClient
         if ($status >= 400) {
             $details = is_array($json) ? $json : ['raw' => mb_substr($raw, 0, 800)];
 
-            if (isset($json['error']['code'])) $details['googleCode'] = $json['error']['code'];
-            if (isset($json['error']['message'])) $details['googleMessage'] = $json['error']['message'];
+            if (isset($json['error']['code'])) {
+                $details['googleCode'] = $json['error']['code'];
+            }
+            if (isset($json['error']['message'])) {
+                $details['googleMessage'] = $json['error']['message'];
+            }
 
             throw new HttpException(502, 'GOOGLE_BOOKS_ERROR', $details, 'Google Books error');
         }

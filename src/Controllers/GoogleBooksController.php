@@ -32,7 +32,7 @@ final class GoogleBooksController
         $lang = Env::get('GOOGLE_BOOKS_LANG', 'fr') ?? 'fr';
         $country = Env::get('GOOGLE_BOOKS_COUNTRY', 'FR') ?? 'FR';
 
-        $cacheTtl = (int) (Env::get('GOOGLE_BOOKS_CACHE_TTL_SECONDS', '604800')); // 7 jours
+        $cacheTtl = (int) (Env::get('GOOGLE_BOOKS_CACHE_TTL_SECONDS', '604800'));
         $cacheKey = $this->makeCacheKey($q, $limit, $lang, $country);
 
         $cacheRepo = new GoogleBooksCacheRepository();
@@ -40,21 +40,56 @@ final class GoogleBooksController
 
         if ($cached) {
             $payload = json_decode($cached['response_json'] ?? '[]', true) ?: [];
-            Response::ok($this->normalizeSearchResponse($payload, true));
+            Response::ok($payload);
             return;
         }
 
         $client = new GoogleBooksClient();
-        $raw = $client->searchVolumes($q, $limit, $lang, $country);
+        $rawQueries = $this->buildQueryVariants($q);
+
+        $normalizedItems = [];
+        $seen = [];
+
+        foreach ($rawQueries as $query) {
+            try {
+                $raw = $this->looksLikeIsbn($q)
+                    ? $client->searchByIsbn($this->normalizeIsbn($q), $limit, $lang, $country)
+                    : $client->searchVolumes($query, $limit, $lang, $country);
+
+                foreach (($raw['items'] ?? []) as $it) {
+                    $normalized = $this->normalizeVolumeItem($it);
+                    $key = $this->googleItemDedupKey($normalized);
+
+                    if (!isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $normalizedItems[] = $normalized;
+                    }
+
+                    if (count($normalizedItems) >= $limit) {
+                        break 2;
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('[BOOKLY][GoogleBooks search] query failed: ' . $query . ' :: ' . $e->getMessage());
+            }
+        }
+
+        $response = [
+            'meta' => [
+                'cacheHit' => false,
+                'totalItems' => count($normalizedItems),
+            ],
+            'items' => array_slice($normalizedItems, 0, $limit),
+        ];
 
         $cacheRepo->upsert(
             $cacheKey,
             $q,
-            json_encode($raw, JSON_UNESCAPED_UNICODE),
+            json_encode($response, JSON_UNESCAPED_UNICODE),
             $cacheTtl
         );
 
-        Response::ok($this->normalizeSearchResponse($raw, false));
+        Response::ok($response);
     }
 
     public function import(): void
@@ -122,6 +157,91 @@ final class GoogleBooksController
         ]);
     }
 
+    private function buildQueryVariants(string $q): array
+    {
+        $base = trim($q);
+        $clean = preg_replace('/\s+/', ' ', $base) ?? $base;
+        $clean = trim($clean);
+
+        if ($this->looksLikeIsbn($clean)) {
+            return [$this->normalizeIsbn($clean)];
+        }
+
+        $variants = [];
+        $variants[] = $clean;
+
+        $normalizedTitle = str_replace('-', ' ', $clean);
+        if ($normalizedTitle !== $clean) {
+            $variants[] = $normalizedTitle;
+        }
+
+        if (!str_contains(mb_strtolower($clean), 'folio')) {
+            $variants[] = $clean . ' folio';
+        }
+
+        if (!str_contains(mb_strtolower($clean), 'gallimard')) {
+            $variants[] = $clean . ' gallimard';
+        }
+
+        $authorGuess = $this->guessAuthorFromQuery($clean);
+        if ($authorGuess !== null) {
+            $variants[] = $clean . ' ' . $authorGuess;
+        }
+
+        return array_values(array_unique(array_filter(array_map('trim', $variants))));
+    }
+
+    private function guessAuthorFromQuery(string $q): ?string
+    {
+        $lower = mb_strtolower($q);
+
+        $map = [
+            'bel ami' => 'maupassant',
+            'bel-ami' => 'maupassant',
+            'etranger' => 'camus',
+            'l étranger' => 'camus',
+            'l\'étranger' => 'camus',
+            'madame bovary' => 'flaubert',
+            'germinal' => 'zola',
+        ];
+
+        foreach ($map as $needle => $author) {
+            if (str_contains($lower, $needle)) {
+                return $author;
+            }
+        }
+
+        return null;
+    }
+
+    private function looksLikeIsbn(string $q): bool
+    {
+        $isbn = $this->normalizeIsbn($q);
+        $len = strlen($isbn);
+        return $len === 10 || $len === 13;
+    }
+
+    private function normalizeIsbn(string $q): string
+    {
+        return preg_replace('/[^0-9Xx]/', '', trim($q)) ?? '';
+    }
+
+    private function googleItemDedupKey(array $item): string
+    {
+        $isbn13 = trim((string) ($item['isbn13'] ?? ''));
+        if ($isbn13 !== '') {
+            return 'isbn13:' . $isbn13;
+        }
+
+        $googleId = trim((string) ($item['googleVolumeId'] ?? ''));
+        if ($googleId !== '') {
+            return 'gid:' . $googleId;
+        }
+
+        return 'fallback:' . mb_strtolower(trim((string) ($item['title'] ?? ''))) . '|' .
+            mb_strtolower(trim((string) ($item['author'] ?? '')));
+    }
+
     private function makeCacheKey(string $q, int $limit, string $lang, string $country): string
     {
         $norm = $this->normalizeQuery($q);
@@ -131,6 +251,7 @@ final class GoogleBooksController
             'limit' => $limit,
             'lang' => strtolower($lang),
             'country' => strtoupper($country),
+            'strategy' => 'multi_try_v1',
         ], JSON_UNESCAPED_UNICODE));
     }
 
@@ -139,22 +260,6 @@ final class GoogleBooksController
         $q = trim(mb_strtolower($q));
         $q = preg_replace('/\s+/', ' ', $q) ?? $q;
         return $q;
-    }
-
-    private function normalizeSearchResponse(array $raw, bool $cacheHit): array
-    {
-        $items = [];
-        foreach (($raw['items'] ?? []) as $it) {
-            $items[] = $this->normalizeVolumeItem($it);
-        }
-
-        return [
-            'meta' => [
-                'cacheHit' => $cacheHit,
-                'totalItems' => (int) ($raw['totalItems'] ?? count($items)),
-            ],
-            'items' => $items,
-        ];
     }
 
     private function normalizeVolumeItem(array $it): array

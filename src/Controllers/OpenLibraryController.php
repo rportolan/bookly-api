@@ -36,21 +36,63 @@ final class OpenLibraryController
 
         if ($cached) {
             $payload = json_decode($cached['response_json'] ?? '[]', true) ?: [];
-            Response::ok($this->normalizeSearchResponse($payload, true));
+            Response::ok($payload);
             return;
         }
 
         $client = new OpenLibraryClient();
-        $raw = $client->searchBooks($q, $limit);
+        $queries = $this->buildQueryVariants($q);
+
+        $items = [];
+        $seen = [];
+
+        foreach ($queries as $query) {
+            try {
+                $raw = $this->looksLikeIsbn($q)
+                    ? $client->searchByIsbn($this->normalizeIsbn($q))
+                    : $client->searchBooks($query, $limit);
+
+                foreach (($raw['docs'] ?? []) as $doc) {
+                    if (!is_array($doc)) {
+                        continue;
+                    }
+
+                    $normalized = $this->normalizeDocItem($doc);
+                    if ($normalized === null) {
+                        continue;
+                    }
+
+                    $key = $this->openLibraryItemDedupKey($normalized);
+                    if (!isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $items[] = $normalized;
+                    }
+
+                    if (count($items) >= $limit) {
+                        break 2;
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('[BOOKLY][OpenLibrary search] query failed: ' . $query . ' :: ' . $e->getMessage());
+            }
+        }
+
+        $response = [
+            'meta' => [
+                'cacheHit' => false,
+                'totalItems' => count($items),
+            ],
+            'items' => array_slice($items, 0, $limit),
+        ];
 
         $cacheRepo->upsert(
             $cacheKey,
             $q,
-            json_encode($raw, JSON_UNESCAPED_UNICODE),
+            json_encode($response, JSON_UNESCAPED_UNICODE),
             $cacheTtl
         );
 
-        Response::ok($this->normalizeSearchResponse($raw, false));
+        Response::ok($response);
     }
 
     public function import(): void
@@ -69,7 +111,6 @@ final class OpenLibraryController
         }
 
         $client = new OpenLibraryClient();
-
         $edition = $client->getEdition($editionId);
         $payload = $this->mapEditionToBookPayload($client, $edition);
 
@@ -116,6 +157,91 @@ final class OpenLibraryController
         ]);
     }
 
+    private function buildQueryVariants(string $q): array
+    {
+        $base = trim($q);
+        $clean = preg_replace('/\s+/', ' ', $base) ?? $base;
+        $clean = trim($clean);
+
+        if ($this->looksLikeIsbn($clean)) {
+            return [$this->normalizeIsbn($clean)];
+        }
+
+        $variants = [];
+        $variants[] = $clean;
+
+        $normalizedTitle = str_replace('-', ' ', $clean);
+        if ($normalizedTitle !== $clean) {
+            $variants[] = $normalizedTitle;
+        }
+
+        if (!str_contains(mb_strtolower($clean), 'folio')) {
+            $variants[] = $clean . ' folio';
+        }
+
+        if (!str_contains(mb_strtolower($clean), 'gallimard')) {
+            $variants[] = $clean . ' gallimard';
+        }
+
+        $authorGuess = $this->guessAuthorFromQuery($clean);
+        if ($authorGuess !== null) {
+            $variants[] = $clean . ' ' . $authorGuess;
+        }
+
+        return array_values(array_unique(array_filter(array_map('trim', $variants))));
+    }
+
+    private function guessAuthorFromQuery(string $q): ?string
+    {
+        $lower = mb_strtolower($q);
+
+        $map = [
+            'bel ami' => 'maupassant',
+            'bel-ami' => 'maupassant',
+            'etranger' => 'camus',
+            'l étranger' => 'camus',
+            'l\'étranger' => 'camus',
+            'madame bovary' => 'flaubert',
+            'germinal' => 'zola',
+        ];
+
+        foreach ($map as $needle => $author) {
+            if (str_contains($lower, $needle)) {
+                return $author;
+            }
+        }
+
+        return null;
+    }
+
+    private function looksLikeIsbn(string $q): bool
+    {
+        $isbn = $this->normalizeIsbn($q);
+        $len = strlen($isbn);
+        return $len === 10 || $len === 13;
+    }
+
+    private function normalizeIsbn(string $q): string
+    {
+        return preg_replace('/[^0-9Xx]/', '', trim($q)) ?? '';
+    }
+
+    private function openLibraryItemDedupKey(array $item): string
+    {
+        $isbn13 = trim((string) ($item['isbn13'] ?? ''));
+        if ($isbn13 !== '') {
+            return 'isbn13:' . $isbn13;
+        }
+
+        $editionId = trim((string) ($item['openLibraryEditionId'] ?? ''));
+        if ($editionId !== '') {
+            return 'olid:' . $editionId;
+        }
+
+        return 'fallback:' . mb_strtolower(trim((string) ($item['title'] ?? ''))) . '|' .
+            mb_strtolower(trim((string) ($item['author'] ?? '')));
+    }
+
     private function makeCacheKey(string $q, int $limit): string
     {
         $norm = $this->normalizeQuery($q);
@@ -123,6 +249,7 @@ final class OpenLibraryController
         return hash('sha256', json_encode([
             'q' => $norm,
             'limit' => $limit,
+            'strategy' => 'multi_try_v1',
         ], JSON_UNESCAPED_UNICODE));
     }
 
@@ -131,30 +258,6 @@ final class OpenLibraryController
         $q = trim(mb_strtolower($q));
         $q = preg_replace('/\s+/', ' ', $q) ?? $q;
         return $q;
-    }
-
-    private function normalizeSearchResponse(array $raw, bool $cacheHit): array
-    {
-        $items = [];
-
-        foreach (($raw['docs'] ?? []) as $doc) {
-            if (!is_array($doc)) {
-                continue;
-            }
-
-            $normalized = $this->normalizeDocItem($doc);
-            if ($normalized !== null) {
-                $items[] = $normalized;
-            }
-        }
-
-        return [
-            'meta' => [
-                'cacheHit' => $cacheHit,
-                'totalItems' => (int) ($raw['numFound'] ?? count($items)),
-            ],
-            'items' => $items,
-        ];
     }
 
     private function normalizeDocItem(array $doc): ?array
@@ -187,7 +290,6 @@ final class OpenLibraryController
         [$isbn10, $isbn13] = $this->extractIsbns($isbns);
 
         $workId = $this->extractWorkIdFromDoc($doc);
-
         $coverUrl = $this->buildCoverUrlForDoc($doc, $editionId);
 
         return [
@@ -215,7 +317,6 @@ final class OpenLibraryController
 
     private function pickEditionId(array $doc): ?string
     {
-        // 1) edition_key[] classique
         $editionKeys = $doc['edition_key'] ?? null;
         if (is_array($editionKeys)) {
             foreach ($editionKeys as $key) {
@@ -226,13 +327,11 @@ final class OpenLibraryController
             }
         }
 
-        // 2) cover_edition_key
         $coverEditionKey = trim((string) ($doc['cover_edition_key'] ?? ''));
         if ($coverEditionKey !== '') {
             return $coverEditionKey;
         }
 
-        // 3) lending_edition_s
         $lendingEdition = trim((string) ($doc['lending_edition_s'] ?? ''));
         if ($lendingEdition !== '') {
             return $lendingEdition;
@@ -401,8 +500,8 @@ final class OpenLibraryController
     private function resolveEditionAuthors(OpenLibraryClient $client, array $edition): array
     {
         $names = [];
-
         $authors = $edition['authors'] ?? [];
+
         if (!is_array($authors)) {
             return $names;
         }
