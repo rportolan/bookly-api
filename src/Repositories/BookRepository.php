@@ -64,57 +64,75 @@ final class BookRepository
 
         $stmt->execute(['user_id' => $userId, 'id' => $userBookId]);
         $row = $stmt->fetch();
+
         return $row ?: null;
     }
 
-    /**
-     * ✅ NOUVEAU : vérifie si un user_book existe déjà pour cet utilisateur et ce livre catalogue.
-     * Utilisé par GoogleBooksController pour savoir si l'import est une vraie création.
-     */
     public function userBookExists(int $userId, int $catalogBookId): bool
     {
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("
-            SELECT id FROM user_books
+            SELECT id
+            FROM user_books
             WHERE user_id = :uid AND book_id = :bid
             LIMIT 1
         ");
         $stmt->execute(['uid' => $userId, 'bid' => $catalogBookId]);
-        return (bool)$stmt->fetch();
+
+        return (bool) $stmt->fetch();
     }
 
-    /**
-     * Création MANUELLE (existant)
-     * -> on insert books + user_books
-     * -> maintenant on accepte aussi googleVolumeId/isbn si présent
-     */
     public function createForUser(int $userId, array $payload): array
     {
         $pdo = Db::pdo();
         $pdo->beginTransaction();
 
         try {
-            // 1) insert into books (catalog)
             $stmt = $pdo->prepare("
-              INSERT INTO books (google_volume_id, title, author, genre, pages, publisher, isbn10, isbn13, cover_url)
-              VALUES (:google_volume_id, :title, :author, :genre, :pages, :publisher, :isbn10, :isbn13, :cover_url)
+              INSERT INTO books (
+                google_volume_id,
+                openlibrary_work_id,
+                openlibrary_edition_id,
+                title,
+                author,
+                genre,
+                pages,
+                publisher,
+                isbn10,
+                isbn13,
+                cover_url
+              )
+              VALUES (
+                :google_volume_id,
+                :openlibrary_work_id,
+                :openlibrary_edition_id,
+                :title,
+                :author,
+                :genre,
+                :pages,
+                :publisher,
+                :isbn10,
+                :isbn13,
+                :cover_url
+              )
             ");
 
             $stmt->execute([
                 'google_volume_id' => $payload['googleVolumeId'] ?? null,
+                'openlibrary_work_id' => $payload['openLibraryWorkId'] ?? null,
+                'openlibrary_edition_id' => $payload['openLibraryEditionId'] ?? null,
                 'title' => $payload['title'],
                 'author' => $payload['author'],
                 'genre' => $payload['genre'] ?? null,
-                'pages' => (int)($payload['pages'] ?? 0),
+                'pages' => (int) ($payload['pages'] ?? 0),
                 'publisher' => $payload['publisher'] ?? null,
                 'isbn10' => $payload['isbn10'] ?? null,
                 'isbn13' => $payload['isbn13'] ?? null,
                 'cover_url' => $payload['coverUrl'] ?? null,
             ]);
 
-            $bookId = (int)$pdo->lastInsertId();
+            $bookId = (int) $pdo->lastInsertId();
 
-            // 2) insert into user_books (user state)
             $stmt = $pdo->prepare("
               INSERT INTO user_books
                 (user_id, book_id, status, progress_pages, rating, started_at, finished_at, summary, analysis_work)
@@ -126,7 +144,7 @@ final class BookRepository
                 'user_id' => $userId,
                 'book_id' => $bookId,
                 'status' => $payload['status'] ?? 'À lire',
-                'progress_pages' => (int)($payload['progressPages'] ?? 0),
+                'progress_pages' => (int) ($payload['progressPages'] ?? 0),
                 'rating' => isset($payload['rating']) ? $payload['rating'] : null,
                 'started_at' => $payload['startedAt'] ?? null,
                 'finished_at' => $payload['finishedAt'] ?? null,
@@ -134,10 +152,10 @@ final class BookRepository
                 'analysis_work' => $payload['analysisWork'] ?? null,
             ]);
 
-            $userBookId = (int)$pdo->lastInsertId();
+            $userBookId = (int) $pdo->lastInsertId();
             $pdo->commit();
 
-            return $this->findOneForUser($userId, $userBookId);
+            return $this->findOneForUser($userId, $userBookId) ?? [];
         } catch (\Throwable $e) {
             $pdo->rollBack();
             throw $e;
@@ -149,11 +167,12 @@ final class BookRepository
         $pdo = Db::pdo();
 
         $existing = $this->findOneForUser($userId, $userBookId);
-        if (!$existing) return null;
+        if (!$existing) {
+            return null;
+        }
 
         $pdo->beginTransaction();
         try {
-            // Update books table
             $stmt = $pdo->prepare("
               UPDATE books
               SET title = :title,
@@ -169,13 +188,12 @@ final class BookRepository
                 'title' => $payload['title'] ?? $existing['title'],
                 'author' => $payload['author'] ?? $existing['author'],
                 'genre' => $payload['genre'] ?? $existing['genre'],
-                'pages' => isset($payload['pages']) ? (int)$payload['pages'] : (int)$existing['pages'],
+                'pages' => isset($payload['pages']) ? (int) $payload['pages'] : (int) $existing['pages'],
                 'publisher' => $payload['publisher'] ?? $existing['publisher'],
                 'cover_url' => $payload['coverUrl'] ?? $existing['cover_url'],
-                'book_id' => (int)$existing['bookId'],
+                'book_id' => (int) $existing['bookId'],
             ]);
 
-            // Update user_books table
             $stmt = $pdo->prepare("
               UPDATE user_books
               SET status = :status,
@@ -190,7 +208,7 @@ final class BookRepository
 
             $stmt->execute([
                 'status' => $payload['status'] ?? $existing['status'],
-                'progress_pages' => isset($payload['progressPages']) ? (int)$payload['progressPages'] : (int)$existing['progress_pages'],
+                'progress_pages' => isset($payload['progressPages']) ? (int) $payload['progressPages'] : (int) $existing['progress_pages'],
                 'rating' => array_key_exists('rating', $payload) ? $payload['rating'] : $existing['rating'],
                 'started_at' => array_key_exists('startedAt', $payload) ? $payload['startedAt'] : $existing['started_at'],
                 'finished_at' => array_key_exists('finishedAt', $payload) ? $payload['finishedAt'] : $existing['finished_at'],
@@ -213,6 +231,7 @@ final class BookRepository
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("DELETE FROM user_books WHERE id = :id AND user_id = :user_id");
         $stmt->execute(['id' => $userBookId, 'user_id' => $userId]);
+
         return $stmt->rowCount() > 0;
     }
 
@@ -230,9 +249,11 @@ final class BookRepository
         $stmt->execute(['ub_id' => $userBookId, 'user_id' => $userId]);
         $row = $stmt->fetch();
 
-        if (!$row) return null;
+        if (!$row) {
+            return null;
+        }
 
-        $pages = (int)$row['pages'];
+        $pages = (int) $row['pages'];
         $safeProgress = max(0, min($pages, $progressPages));
 
         $today = (new \DateTimeImmutable('today'))->format('Y-m-d');
@@ -273,20 +294,33 @@ final class BookRepository
         return $this->findOneForUser($userId, $userBookId);
     }
 
-    /* -------------------------------------------------------
-       ✅ Import Google Books
-    ------------------------------------------------------- */
-
     public function findCatalogByGoogleVolumeId(string $googleVolumeId): ?array
     {
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("
-            SELECT * FROM books
+            SELECT *
+            FROM books
             WHERE google_volume_id = :gid
             LIMIT 1
         ");
         $stmt->execute(['gid' => $googleVolumeId]);
         $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function findCatalogByOpenLibraryEditionId(string $editionId): ?array
+    {
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM books
+            WHERE openlibrary_edition_id = :eid
+            LIMIT 1
+        ");
+        $stmt->execute(['eid' => $editionId]);
+        $row = $stmt->fetch();
+
         return $row ?: null;
     }
 
@@ -294,19 +328,17 @@ final class BookRepository
     {
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("
-            SELECT * FROM books
+            SELECT *
+            FROM books
             WHERE isbn13 = :isbn13
             LIMIT 1
         ");
         $stmt->execute(['isbn13' => $isbn13]);
         $row = $stmt->fetch();
+
         return $row ?: null;
     }
 
-    /**
-     * Upsert du livre dans le catalog "books" (global)
-     * Retourne bookId (catalog)
-     */
     public function upsertCatalogBookFromGoogle(array $payload): int
     {
         $pdo = Db::pdo();
@@ -314,41 +346,133 @@ final class BookRepository
         $googleId = $payload['googleVolumeId'] ?? null;
         $isbn13 = $payload['isbn13'] ?? null;
 
-        // 1) dédup : google id > isbn13
         if ($googleId) {
-            $existing = $this->findCatalogByGoogleVolumeId((string)$googleId);
+            $existing = $this->findCatalogByGoogleVolumeId((string) $googleId);
             if ($existing) {
-                $this->updateCatalogFromGoogle((int)$existing['id'], $payload);
-                return (int)$existing['id'];
+                $this->updateCatalogFromGoogle((int) $existing['id'], $payload);
+                return (int) $existing['id'];
             }
         }
 
         if ($isbn13) {
-            $existing = $this->findCatalogByIsbn13((string)$isbn13);
+            $existing = $this->findCatalogByIsbn13((string) $isbn13);
             if ($existing) {
-                $this->updateCatalogFromGoogle((int)$existing['id'], $payload);
-                return (int)$existing['id'];
+                $this->updateCatalogFromGoogle((int) $existing['id'], $payload);
+                return (int) $existing['id'];
             }
         }
 
-        // 2) sinon create
         $stmt = $pdo->prepare("
-            INSERT INTO books (google_volume_id, title, author, genre, pages, publisher, isbn10, isbn13, cover_url)
-            VALUES (:gid, :title, :author, :genre, :pages, :publisher, :isbn10, :isbn13, :cover)
+            INSERT INTO books (
+                google_volume_id,
+                openlibrary_work_id,
+                openlibrary_edition_id,
+                title,
+                author,
+                genre,
+                pages,
+                publisher,
+                isbn10,
+                isbn13,
+                cover_url
+            )
+            VALUES (
+                :gid,
+                :owid,
+                :oeid,
+                :title,
+                :author,
+                :genre,
+                :pages,
+                :publisher,
+                :isbn10,
+                :isbn13,
+                :cover
+            )
         ");
         $stmt->execute([
             'gid' => $googleId ?: null,
+            'owid' => null,
+            'oeid' => null,
             'title' => $payload['title'] ?? '',
             'author' => $payload['author'] ?? '',
             'genre' => $payload['genre'] ?? null,
-            'pages' => (int)($payload['pages'] ?? 0),
+            'pages' => (int) ($payload['pages'] ?? 0),
             'publisher' => $payload['publisher'] ?? null,
             'isbn10' => $payload['isbn10'] ?? null,
             'isbn13' => $payload['isbn13'] ?? null,
             'cover' => $payload['coverUrl'] ?? null,
         ]);
 
-        return (int)$pdo->lastInsertId();
+        return (int) $pdo->lastInsertId();
+    }
+
+    public function upsertCatalogBookFromOpenLibrary(array $payload): int
+    {
+        $pdo = Db::pdo();
+
+        $editionId = $payload['openLibraryEditionId'] ?? null;
+        $isbn13 = $payload['isbn13'] ?? null;
+
+        if ($editionId) {
+            $existing = $this->findCatalogByOpenLibraryEditionId((string) $editionId);
+            if ($existing) {
+                $this->updateCatalogFromOpenLibrary((int) $existing['id'], $payload);
+                return (int) $existing['id'];
+            }
+        }
+
+        if ($isbn13) {
+            $existing = $this->findCatalogByIsbn13((string) $isbn13);
+            if ($existing) {
+                $this->updateCatalogFromOpenLibrary((int) $existing['id'], $payload);
+                return (int) $existing['id'];
+            }
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO books (
+                google_volume_id,
+                openlibrary_work_id,
+                openlibrary_edition_id,
+                title,
+                author,
+                genre,
+                pages,
+                publisher,
+                isbn10,
+                isbn13,
+                cover_url
+            )
+            VALUES (
+                :gid,
+                :owid,
+                :oeid,
+                :title,
+                :author,
+                :genre,
+                :pages,
+                :publisher,
+                :isbn10,
+                :isbn13,
+                :cover
+            )
+        ");
+        $stmt->execute([
+            'gid' => null,
+            'owid' => $payload['openLibraryWorkId'] ?? null,
+            'oeid' => $editionId ?: null,
+            'title' => $payload['title'] ?? '',
+            'author' => $payload['author'] ?? '',
+            'genre' => $payload['genre'] ?? null,
+            'pages' => (int) ($payload['pages'] ?? 0),
+            'publisher' => $payload['publisher'] ?? null,
+            'isbn10' => $payload['isbn10'] ?? null,
+            'isbn13' => $payload['isbn13'] ?? null,
+            'cover' => $payload['coverUrl'] ?? null,
+        ]);
+
+        return (int) $pdo->lastInsertId();
     }
 
     private function updateCatalogFromGoogle(int $bookId, array $payload): void
@@ -375,7 +499,7 @@ final class BookRepository
             'title' => $payload['title'] ?? '',
             'author' => $payload['author'] ?? '',
             'genre' => $payload['genre'] ?? null,
-            'pages' => (int)($payload['pages'] ?? 0),
+            'pages' => (int) ($payload['pages'] ?? 0),
             'publisher' => $payload['publisher'] ?? null,
             'isbn10' => $payload['isbn10'] ?? null,
             'isbn13' => $payload['isbn13'] ?? null,
@@ -384,15 +508,45 @@ final class BookRepository
         ]);
     }
 
-    /**
-     * Crée le lien user_books si pas déjà existant
-     * Retourne la row join (comme findOneForUser)
-     */
+    private function updateCatalogFromOpenLibrary(int $bookId, array $payload): void
+    {
+        $pdo = Db::pdo();
+
+        $stmt = $pdo->prepare("
+            UPDATE books
+            SET openlibrary_work_id = COALESCE(openlibrary_work_id, :owid),
+                openlibrary_edition_id = COALESCE(openlibrary_edition_id, :oeid),
+                title = COALESCE(NULLIF(:title,''), title),
+                author = COALESCE(NULLIF(:author,''), author),
+                genre = COALESCE(:genre, genre),
+                pages = CASE WHEN :pages > 0 THEN :pages ELSE pages END,
+                publisher = COALESCE(:publisher, publisher),
+                isbn10 = COALESCE(:isbn10, isbn10),
+                isbn13 = COALESCE(:isbn13, isbn13),
+                cover_url = COALESCE(:cover, cover_url)
+            WHERE id = :id
+            LIMIT 1
+        ");
+
+        $stmt->execute([
+            'owid' => $payload['openLibraryWorkId'] ?? null,
+            'oeid' => $payload['openLibraryEditionId'] ?? null,
+            'title' => $payload['title'] ?? '',
+            'author' => $payload['author'] ?? '',
+            'genre' => $payload['genre'] ?? null,
+            'pages' => (int) ($payload['pages'] ?? 0),
+            'publisher' => $payload['publisher'] ?? null,
+            'isbn10' => $payload['isbn10'] ?? null,
+            'isbn13' => $payload['isbn13'] ?? null,
+            'cover' => $payload['coverUrl'] ?? null,
+            'id' => $bookId,
+        ]);
+    }
+
     public function createUserBookIfNotExists(int $userId, int $catalogBookId, array $payload): array
     {
         $pdo = Db::pdo();
 
-        // check exist
         $stmt = $pdo->prepare("
             SELECT id
             FROM user_books
@@ -403,11 +557,10 @@ final class BookRepository
         $existing = $stmt->fetch();
 
         if ($existing) {
-            $userBookId = (int)$existing['id'];
+            $userBookId = (int) $existing['id'];
             return $this->findOneForUser($userId, $userBookId) ?? [];
         }
 
-        // create
         $stmt = $pdo->prepare("
             INSERT INTO user_books
               (user_id, book_id, status, progress_pages, rating, started_at, finished_at, summary, analysis_work)
@@ -418,7 +571,7 @@ final class BookRepository
             'user_id' => $userId,
             'book_id' => $catalogBookId,
             'status' => $payload['status'] ?? 'À lire',
-            'progress_pages' => (int)($payload['progressPages'] ?? 0),
+            'progress_pages' => (int) ($payload['progressPages'] ?? 0),
             'rating' => isset($payload['rating']) ? $payload['rating'] : null,
             'started_at' => $payload['startedAt'] ?? null,
             'finished_at' => $payload['finishedAt'] ?? null,
@@ -426,7 +579,7 @@ final class BookRepository
             'analysis_work' => $payload['analysisWork'] ?? null,
         ]);
 
-        $userBookId = (int)$pdo->lastInsertId();
+        $userBookId = (int) $pdo->lastInsertId();
         return $this->findOneForUser($userId, $userBookId) ?? [];
     }
 }

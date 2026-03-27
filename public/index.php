@@ -22,6 +22,7 @@ use App\Controllers\ReadingController;
 use App\Controllers\LearnController;
 use App\Controllers\DashboardController;
 use App\Controllers\GoogleBooksController;
+use App\Controllers\OpenLibraryController;
 use App\Controllers\CardsController;
 use App\Controllers\QuizController;
 use App\Controllers\DictionaryController;
@@ -151,6 +152,7 @@ $quests     = new QuestsController();
 $reading    = new ReadingController();
 $learn      = new LearnController();
 $gbooks     = new GoogleBooksController();
+$olib       = new OpenLibraryController();
 $cards      = new CardsController();
 $quiz       = new QuizController();
 $dictionary = new DictionaryController();
@@ -165,12 +167,12 @@ $router->add('GET', "{$prefix}/health", $health);
 
 // Auth — routes sensibles protégées par rate limiting
 $router->add('POST', "{$prefix}/auth/register", function () use ($auth) {
-    RateLimiter::check('register:' . RateLimiter::ip(), 5, 3600); // 5 inscriptions/IP/heure
+    RateLimiter::check('register:' . RateLimiter::ip(), 5, 3600);
     $auth->register();
 });
 
 $router->add('POST', "{$prefix}/auth/login", function () use ($auth) {
-    RateLimiter::check('login:' . RateLimiter::ip(), 10, 300); // 10 tentatives/IP/5 minutes
+    RateLimiter::check('login:' . RateLimiter::ip(), 10, 300);
     $auth->login();
 });
 
@@ -182,13 +184,13 @@ $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 // Email verification
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
 $router->add('POST', "{$prefix}/auth/resend-verification", function () use ($auth) {
-    RateLimiter::check('resend:' . RateLimiter::ip(), 3, 3600); // 3 renvois/IP/heure
+    RateLimiter::check('resend:' . RateLimiter::ip(), 3, 3600);
     $auth->resendVerification();
 });
 
 // Password reset
 $router->add('POST', "{$prefix}/auth/forgot-password", function () use ($auth) {
-    RateLimiter::check('forgot:' . RateLimiter::ip(), 5, 3600); // 5 demandes/IP/heure
+    RateLimiter::check('forgot:' . RateLimiter::ip(), 5, 3600);
     $auth->forgotPassword();
 });
 $router->add('POST', "{$prefix}/auth/reset-password", fn() => $auth->resetPassword());
@@ -210,9 +212,13 @@ $router->add('PATCH',  "{$prefix}/books/{id:\d+}",               fn($p) => $book
 $router->add('DELETE', "{$prefix}/books/{id:\d+}",               fn($p) => $books->destroy($p));
 $router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress",      fn($p) => $books->updateProgress($p));
 
-// Google Books (proxy + cache + import)
+// Google Books
 $router->add('GET',  "{$prefix}/google-books/search", fn() => $gbooks->search());
 $router->add('POST', "{$prefix}/google-books/import", fn() => $gbooks->import());
+
+// Open Library
+$router->add('GET',  "{$prefix}/open-library/search", fn() => $olib->search());
+$router->add('POST', "{$prefix}/open-library/import", fn() => $olib->import());
 
 // Quotes
 $router->add('GET',    "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->index($p));
@@ -236,8 +242,8 @@ $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => 
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
 
 // Cards
-$router->add('GET',  "{$prefix}/cards",                    fn() => $cards->index());
-$router->add('POST', "{$prefix}/cards/{id:\d+}/claim",     fn($p) => $cards->claim($p));
+$router->add('GET',  "{$prefix}/cards",                fn() => $cards->index());
+$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", fn($p) => $cards->claim($p));
 
 // Reading
 $router->add('GET',   "{$prefix}/reading/goal",      fn() => $reading->getGoal());
@@ -257,7 +263,7 @@ $router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}",           fn($p) => $quiz-
 $router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}",         fn($p) => $quiz->quizShow($p));
 $router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", fn($p) => $quiz->submit($p));
 
-// Dictionary (Wiktionary proxy + cache)
+// Dictionary
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
 
 /**
