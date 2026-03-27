@@ -136,7 +136,12 @@ final class OpenLibraryController
     private function normalizeSearchResponse(array $raw, bool $cacheHit): array
     {
         $items = [];
+
         foreach (($raw['docs'] ?? []) as $doc) {
+            if (!is_array($doc)) {
+                continue;
+            }
+
             $normalized = $this->normalizeDocItem($doc);
             if ($normalized !== null) {
                 $items[] = $normalized;
@@ -154,13 +159,13 @@ final class OpenLibraryController
 
     private function normalizeDocItem(array $doc): ?array
     {
-        $editionIds = $doc['edition_key'] ?? [];
-        if (!is_array($editionIds) || count($editionIds) === 0) {
+        $title = trim((string) ($doc['title'] ?? ''));
+        if ($title === '') {
             return null;
         }
 
-        $editionId = trim((string) $editionIds[0]);
-        if ($editionId === '') {
+        $editionId = $this->pickEditionId($doc);
+        if ($editionId === null || $editionId === '') {
             return null;
         }
 
@@ -181,31 +186,110 @@ final class OpenLibraryController
 
         [$isbn10, $isbn13] = $this->extractIsbns($isbns);
 
-        $coverUrl = null;
-        if (isset($doc['cover_i']) && is_numeric($doc['cover_i'])) {
-            $coverUrl = (new OpenLibraryClient())->coverUrlFromCoverId((int) $doc['cover_i'], 'L');
-        } else {
-            $coverUrl = (new OpenLibraryClient())->coverUrlFromEdition($editionId, 'L');
-        }
+        $workId = $this->extractWorkIdFromDoc($doc);
 
-        $workId = $this->extractOlid($doc['key'] ?? null, '/works/');
+        $coverUrl = $this->buildCoverUrlForDoc($doc, $editionId);
 
         return [
             'openLibraryEditionId' => $editionId,
             'openLibraryWorkId' => $workId,
-            'title' => (string) ($doc['title'] ?? ''),
-            'author' => count($authorNames) ? (string) $authorNames[0] : '',
-            'authors' => array_values(array_map('strval', $authorNames)),
-            'publisher' => count($publishers) ? (string) $publishers[0] : null,
-            'pages' => isset($doc['number_of_pages_median']) ? (int) $doc['number_of_pages_median'] : 0,
+            'title' => $title,
+            'author' => count($authorNames) ? trim((string) $authorNames[0]) : '',
+            'authors' => array_values(array_filter(array_map(
+                fn($a) => trim((string) $a),
+                $authorNames
+            ), fn($a) => $a !== '')),
+            'publisher' => count($publishers) ? trim((string) $publishers[0]) : null,
+            'pages' => isset($doc['number_of_pages_median']) && is_numeric($doc['number_of_pages_median'])
+                ? (int) $doc['number_of_pages_median']
+                : 0,
             'coverUrl' => $coverUrl,
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
             'publishedDate' => $doc['first_publish_year'] ?? null,
             'description' => null,
-            'language' => null,
+            'language' => $this->normalizeLanguage($doc['language'] ?? null),
             'genre' => $this->simplifyGenre($doc['subject'] ?? null),
         ];
+    }
+
+    private function pickEditionId(array $doc): ?string
+    {
+        // 1) edition_key[] classique
+        $editionKeys = $doc['edition_key'] ?? null;
+        if (is_array($editionKeys)) {
+            foreach ($editionKeys as $key) {
+                $key = trim((string) $key);
+                if ($key !== '') {
+                    return $key;
+                }
+            }
+        }
+
+        // 2) cover_edition_key
+        $coverEditionKey = trim((string) ($doc['cover_edition_key'] ?? ''));
+        if ($coverEditionKey !== '') {
+            return $coverEditionKey;
+        }
+
+        // 3) lending_edition_s
+        $lendingEdition = trim((string) ($doc['lending_edition_s'] ?? ''));
+        if ($lendingEdition !== '') {
+            return $lendingEdition;
+        }
+
+        return null;
+    }
+
+    private function extractWorkIdFromDoc(array $doc): ?string
+    {
+        $key = trim((string) ($doc['key'] ?? ''));
+        if ($key !== '' && str_starts_with($key, '/works/')) {
+            return $this->extractOlid($key, '/works/');
+        }
+
+        $seed = $doc['seed'] ?? null;
+        if (is_array($seed)) {
+            foreach ($seed as $s) {
+                $s = trim((string) $s);
+                if (str_starts_with($s, '/works/')) {
+                    return $this->extractOlid($s, '/works/');
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function buildCoverUrlForDoc(array $doc, string $editionId): ?string
+    {
+        $client = new OpenLibraryClient();
+
+        if (isset($doc['cover_i']) && is_numeric($doc['cover_i'])) {
+            return $client->coverUrlFromCoverId((int) $doc['cover_i'], 'L');
+        }
+
+        if ($editionId !== '') {
+            return $client->coverUrlFromEdition($editionId, 'L');
+        }
+
+        return null;
+    }
+
+    private function normalizeLanguage(mixed $languages): ?string
+    {
+        if (!is_array($languages) || count($languages) === 0) {
+            return null;
+        }
+
+        foreach ($languages as $lang) {
+            $s = trim((string) $lang);
+            if ($s !== '') {
+                return $s;
+            }
+        }
+
+        return null;
     }
 
     private function extractIsbns(array $isbns): array
@@ -261,19 +345,20 @@ final class OpenLibraryController
         }
 
         $authors = $this->resolveEditionAuthors($client, $edition);
+
         $publisher = null;
         if (isset($edition['publishers']) && is_array($edition['publishers']) && count($edition['publishers']) > 0) {
-            $publisher = (string) $edition['publishers'][0];
+            $publisher = trim((string) $edition['publishers'][0]) ?: null;
         }
 
         $isbn10 = null;
         if (isset($edition['isbn_10']) && is_array($edition['isbn_10']) && count($edition['isbn_10']) > 0) {
-            $isbn10 = (string) $edition['isbn_10'][0];
+            $isbn10 = trim((string) $edition['isbn_10'][0]) ?: null;
         }
 
         $isbn13 = null;
         if (isset($edition['isbn_13']) && is_array($edition['isbn_13']) && count($edition['isbn_13']) > 0) {
-            $isbn13 = (string) $edition['isbn_13'][0];
+            $isbn13 = trim((string) $edition['isbn_13'][0]) ?: null;
         }
 
         $genre = null;
