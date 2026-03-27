@@ -69,21 +69,18 @@ final class GoogleBooksController
         $volume = $client->getVolume($volumeId, $lang, $country);
 
         $payload = $this->mapGoogleVolumeToBookPayload($volume);
-
         $payload['status'] = $body['status'] ?? 'À lire';
         $payload['progressPages'] = isset($body['progressPages']) ? (int)$body['progressPages'] : 0;
 
         $repo = new BookRepository();
 
         $catalogBookId = $repo->upsertCatalogBookFromGoogle($payload);
-
         $isNewUserBook = !$repo->userBookExists($userId, $catalogBookId);
 
         $row = $repo->createUserBookIfNotExists($userId, $catalogBookId, $payload);
 
         $response = $this->mapUserBookRow($row);
 
-        // On garde les récompenses éventuelles pour les renvoyer au front
         $rewardPayload = null;
 
         if ($isNewUserBook) {
@@ -105,10 +102,16 @@ final class GoogleBooksController
             }
         }
 
-        // Fusionne la réponse livre + récompenses si présentes
-        if (is_array($rewardPayload)) {
-            $response = array_merge($response, $rewardPayload);
-        }
+        // Important : on renvoie EXACTEMENT la forme attendue par handleLevelUpResponse
+        $response['progress'] = is_array($rewardPayload) ? ($rewardPayload['progress'] ?? null) : null;
+        $response['levelUp'] = is_array($rewardPayload)
+            ? ($rewardPayload['levelUp'] ?? ['happened' => false])
+            : ['happened' => false];
+        $response['cardUnlock'] = is_array($rewardPayload)
+            ? ($rewardPayload['cardUnlock'] ?? ['happened' => false, 'cards' => []])
+            : ['happened' => false, 'cards' => []];
+        $response['awardedXp'] = is_array($rewardPayload) ? (int)($rewardPayload['awardedXp'] ?? 0) : 0;
+        $response['awardType'] = is_array($rewardPayload) ? ($rewardPayload['awardType'] ?? 'BOOK_CREATED') : 'BOOK_CREATED';
 
         Response::created($response);
     }
