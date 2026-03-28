@@ -121,7 +121,8 @@ final class BookDiscoveryService
             'provider' => 'isbndb',
             'q' => $this->normalizeQuery($query),
             'limit' => $limit,
-            'v' => 'search_v2',
+            'mode' => $this->looksLikeIsbn($query) ? 'isbn_direct' : 'search',
+            'v' => 'search_v4',
         ], JSON_UNESCAPED_UNICODE));
 
         $cacheRepo = new IsbnDbCacheRepository();
@@ -133,20 +134,38 @@ final class BookDiscoveryService
         }
 
         $items = [];
+        $client = new IsbnDbClient();
 
         try {
-            $raw = (new IsbnDbClient())->searchBooks($query, $limit, 1, $this->guessIsbnDbColumn($query));
-            $books = $raw['books'] ?? [];
+            if ($this->looksLikeIsbn($query)) {
+                $raw = $client->getBook($this->normalizeIsbn($query));
+                $book = is_array($raw['book'] ?? null) ? $raw['book'] : $raw;
 
-            if (is_array($books)) {
-                foreach ($books as $book) {
-                    if (!is_array($book)) {
-                        continue;
-                    }
-
+                if (is_array($book)) {
                     $normalized = $this->normalizeIsbnDbBook($book);
                     if ($normalized !== null) {
                         $items[] = $normalized;
+                    }
+                }
+            } else {
+                $raw = $client->searchBooks(
+                    $query,
+                    $limit,
+                    1,
+                    $this->guessIsbnDbColumn($query)
+                );
+
+                $books = $raw['books'] ?? [];
+                if (is_array($books)) {
+                    foreach ($books as $book) {
+                        if (!is_array($book)) {
+                            continue;
+                        }
+
+                        $normalized = $this->normalizeIsbnDbBook($book);
+                        if ($normalized !== null) {
+                            $items[] = $normalized;
+                        }
                     }
                 }
             }
