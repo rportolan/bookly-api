@@ -138,24 +138,28 @@ final class BookRepository
             ");
 
             $stmt->execute([
-                'google_volume_id' => $payload['googleVolumeId'] ?? null,
-                'openlibrary_work_id' => $payload['openLibraryWorkId'] ?? null,
-                'openlibrary_edition_id' => $payload['openLibraryEditionId'] ?? null,
-                'isbndb_book_id' => $payload['isbnDbBookId'] ?? null,
-                'metadata_source' => $payload['metadataSource'] ?? 'manual',
-                'title' => $payload['title'],
-                'author' => $payload['author'],
-                'genre' => $payload['genre'] ?? null,
-                'pages' => (int) ($payload['pages'] ?? 0),
-                'publisher' => $payload['publisher'] ?? null,
-                'isbn10' => $payload['isbn10'] ?? null,
-                'isbn13' => $payload['isbn13'] ?? null,
-                'published_date' => $payload['publishedDate'] ?? null,
-                'language' => $payload['language'] ?? null,
-                'cover_url' => $payload['coverUrl'] ?? null,
+                'google_volume_id' => $this->nullIfBlank($payload['googleVolumeId'] ?? null),
+                'openlibrary_work_id' => $this->nullIfBlank($payload['openLibraryWorkId'] ?? null),
+                'openlibrary_edition_id' => $this->nullIfBlank($payload['openLibraryEditionId'] ?? null),
+                'isbndb_book_id' => $this->nullIfBlank($payload['isbnDbBookId'] ?? null),
+                'metadata_source' => $this->normalizeMetadataSource($payload['metadataSource'] ?? 'manual'),
+                'title' => trim((string) ($payload['title'] ?? '')),
+                'author' => trim((string) ($payload['author'] ?? '')),
+                'genre' => $this->nullIfBlank($payload['genre'] ?? null),
+                'pages' => max(0, (int) ($payload['pages'] ?? 0)),
+                'publisher' => $this->nullIfBlank($payload['publisher'] ?? null),
+                'isbn10' => $this->nullIfBlank($payload['isbn10'] ?? null),
+                'isbn13' => $this->nullIfBlank($payload['isbn13'] ?? null),
+                'published_date' => $this->nullIfBlank($payload['publishedDate'] ?? null),
+                'language' => $this->nullIfBlank($payload['language'] ?? null),
+                'cover_url' => $this->nullIfBlank($payload['coverUrl'] ?? null),
             ]);
 
             $bookId = (int) $pdo->lastInsertId();
+
+            if ($this->normalizeMetadataSource($payload['metadataSource'] ?? 'manual') === 'isbndb') {
+                $this->touchIsbnDbSync($bookId);
+            }
 
             $stmt = $pdo->prepare("
               INSERT INTO user_books
@@ -168,12 +172,12 @@ final class BookRepository
                 'user_id' => $userId,
                 'book_id' => $bookId,
                 'status' => $payload['status'] ?? 'À lire',
-                'progress_pages' => (int) ($payload['progressPages'] ?? 0),
+                'progress_pages' => max(0, (int) ($payload['progressPages'] ?? 0)),
                 'rating' => isset($payload['rating']) ? $payload['rating'] : null,
                 'started_at' => $payload['startedAt'] ?? null,
                 'finished_at' => $payload['finishedAt'] ?? null,
-                'summary' => $payload['summary'] ?? null,
-                'analysis_work' => $payload['analysisWork'] ?? null,
+                'summary' => $this->nullIfBlank($payload['summary'] ?? null),
+                'analysis_work' => $this->nullIfBlank($payload['analysisWork'] ?? null),
             ]);
 
             $userBookId = (int) $pdo->lastInsertId();
@@ -214,17 +218,17 @@ final class BookRepository
             ");
 
             $stmt->execute([
-                'title' => $payload['title'] ?? $existing['title'],
-                'author' => $payload['author'] ?? $existing['author'],
-                'genre' => $payload['genre'] ?? $existing['genre'],
-                'pages' => isset($payload['pages']) ? (int) $payload['pages'] : (int) $existing['pages'],
-                'publisher' => $payload['publisher'] ?? $existing['publisher'],
-                'isbn10' => $payload['isbn10'] ?? $existing['isbn10'],
-                'isbn13' => $payload['isbn13'] ?? $existing['isbn13'],
-                'published_date' => $payload['publishedDate'] ?? $existing['published_date'],
-                'language' => $payload['language'] ?? $existing['language'],
-                'cover_url' => $payload['coverUrl'] ?? $existing['cover_url'],
-                'metadata_source' => $payload['metadataSource'] ?? $existing['metadata_source'] ?? 'manual',
+                'title' => trim((string) ($payload['title'] ?? $existing['title'])),
+                'author' => trim((string) ($payload['author'] ?? $existing['author'])),
+                'genre' => $this->nullIfBlank($payload['genre'] ?? $existing['genre']),
+                'pages' => isset($payload['pages']) ? max(0, (int) $payload['pages']) : (int) $existing['pages'],
+                'publisher' => $this->nullIfBlank($payload['publisher'] ?? $existing['publisher']),
+                'isbn10' => $this->nullIfBlank($payload['isbn10'] ?? $existing['isbn10']),
+                'isbn13' => $this->nullIfBlank($payload['isbn13'] ?? $existing['isbn13']),
+                'published_date' => $this->nullIfBlank($payload['publishedDate'] ?? $existing['published_date']),
+                'language' => $this->nullIfBlank($payload['language'] ?? $existing['language']),
+                'cover_url' => $this->nullIfBlank($payload['coverUrl'] ?? $existing['cover_url']),
+                'metadata_source' => $this->normalizeMetadataSource($payload['metadataSource'] ?? ($existing['metadata_source'] ?? 'manual')),
                 'book_id' => (int) $existing['bookId'],
             ]);
 
@@ -242,12 +246,12 @@ final class BookRepository
 
             $stmt->execute([
                 'status' => $payload['status'] ?? $existing['status'],
-                'progress_pages' => isset($payload['progressPages']) ? (int) $payload['progressPages'] : (int) $existing['progress_pages'],
+                'progress_pages' => isset($payload['progressPages']) ? max(0, (int) $payload['progressPages']) : (int) $existing['progress_pages'],
                 'rating' => array_key_exists('rating', $payload) ? $payload['rating'] : $existing['rating'],
                 'started_at' => array_key_exists('startedAt', $payload) ? $payload['startedAt'] : $existing['started_at'],
                 'finished_at' => array_key_exists('finishedAt', $payload) ? $payload['finishedAt'] : $existing['finished_at'],
-                'summary' => array_key_exists('summary', $payload) ? $payload['summary'] : $existing['summary'],
-                'analysis_work' => array_key_exists('analysisWork', $payload) ? $payload['analysisWork'] : $existing['analysis_work'],
+                'summary' => array_key_exists('summary', $payload) ? $this->nullIfBlank($payload['summary']) : $existing['summary'],
+                'analysis_work' => array_key_exists('analysisWork', $payload) ? $this->nullIfBlank($payload['analysisWork']) : $existing['analysis_work'],
                 'id' => $userBookId,
                 'user_id' => $userId,
             ]);
@@ -335,6 +339,11 @@ final class BookRepository
 
     public function findCatalogByGoogleVolumeId(string $googleVolumeId): ?array
     {
+        $googleVolumeId = trim($googleVolumeId);
+        if ($googleVolumeId === '') {
+            return null;
+        }
+
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("SELECT * FROM books WHERE google_volume_id = :gid LIMIT 1");
         $stmt->execute(['gid' => $googleVolumeId]);
@@ -345,6 +354,11 @@ final class BookRepository
 
     public function findCatalogByOpenLibraryEditionId(string $editionId): ?array
     {
+        $editionId = trim($editionId);
+        if ($editionId === '') {
+            return null;
+        }
+
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("SELECT * FROM books WHERE openlibrary_edition_id = :eid LIMIT 1");
         $stmt->execute(['eid' => $editionId]);
@@ -355,6 +369,11 @@ final class BookRepository
 
     public function findCatalogByIsbnDbBookId(string $isbnDbBookId): ?array
     {
+        $isbnDbBookId = trim($isbnDbBookId);
+        if ($isbnDbBookId === '') {
+            return null;
+        }
+
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("SELECT * FROM books WHERE isbndb_book_id = :bid LIMIT 1");
         $stmt->execute(['bid' => $isbnDbBookId]);
@@ -365,6 +384,11 @@ final class BookRepository
 
     public function findCatalogByIsbn13(string $isbn13): ?array
     {
+        $isbn13 = trim($isbn13);
+        if ($isbn13 === '') {
+            return null;
+        }
+
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("SELECT * FROM books WHERE isbn13 = :isbn13 LIMIT 1");
         $stmt->execute(['isbn13' => $isbn13]);
@@ -375,6 +399,11 @@ final class BookRepository
 
     public function findCatalogByIsbn10(string $isbn10): ?array
     {
+        $isbn10 = trim($isbn10);
+        if ($isbn10 === '') {
+            return null;
+        }
+
         $pdo = Db::pdo();
         $stmt = $pdo->prepare("SELECT * FROM books WHERE isbn10 = :isbn10 LIMIT 1");
         $stmt->execute(['isbn10' => $isbn10]);
@@ -426,12 +455,12 @@ final class BookRepository
             'user_id' => $userId,
             'book_id' => $catalogBookId,
             'status' => $payload['status'] ?? 'À lire',
-            'progress_pages' => (int) ($payload['progressPages'] ?? 0),
+            'progress_pages' => max(0, (int) ($payload['progressPages'] ?? 0)),
             'rating' => isset($payload['rating']) ? $payload['rating'] : null,
             'started_at' => $payload['startedAt'] ?? null,
             'finished_at' => $payload['finishedAt'] ?? null,
-            'summary' => $payload['summary'] ?? null,
-            'analysis_work' => $payload['analysisWork'] ?? null,
+            'summary' => $this->nullIfBlank($payload['summary'] ?? null),
+            'analysis_work' => $this->nullIfBlank($payload['analysisWork'] ?? null),
         ]);
 
         $userBookId = (int) $pdo->lastInsertId();
@@ -440,14 +469,15 @@ final class BookRepository
 
     public function upsertCatalogBook(array $payload, string $defaultSource = 'merged'): int
     {
-        $existing = $this->findExistingCatalogBook($payload);
+        $normalizedPayload = $this->normalizeCatalogPayload($payload, $defaultSource);
+        $existing = $this->findExistingCatalogBook($normalizedPayload);
 
         if ($existing) {
-            $this->updateCatalogBook((int) $existing['id'], $payload, $defaultSource);
+            $this->updateCatalogBook((int) $existing['id'], $normalizedPayload, $defaultSource);
             return (int) $existing['id'];
         }
 
-        return $this->insertCatalogBook($payload, $defaultSource);
+        return $this->insertCatalogBook($normalizedPayload, $defaultSource);
     }
 
     private function findExistingCatalogBook(array $payload): ?array
@@ -515,7 +545,8 @@ final class BookRepository
                 isbn13,
                 published_date,
                 language,
-                cover_url
+                cover_url,
+                isbndb_synced_at
             )
             VALUES (
                 :gid,
@@ -532,7 +563,8 @@ final class BookRepository
                 :isbn13,
                 :published_date,
                 :language,
-                :cover
+                :cover,
+                :isbndb_synced_at
             )
         ");
         $stmt->execute([
@@ -544,13 +576,16 @@ final class BookRepository
             'title' => $payload['title'] ?? '',
             'author' => $payload['author'] ?? '',
             'genre' => $payload['genre'] ?? null,
-            'pages' => (int) ($payload['pages'] ?? 0),
+            'pages' => max(0, (int) ($payload['pages'] ?? 0)),
             'publisher' => $payload['publisher'] ?? null,
             'isbn10' => $payload['isbn10'] ?? null,
             'isbn13' => $payload['isbn13'] ?? null,
             'published_date' => $payload['publishedDate'] ?? null,
             'language' => $payload['language'] ?? null,
             'cover' => $payload['coverUrl'] ?? null,
+            'isbndb_synced_at' => ($payload['metadataSource'] ?? $defaultSource) === 'isbndb'
+                ? (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s')
+                : null,
         ]);
 
         return (int) $pdo->lastInsertId();
@@ -580,28 +615,99 @@ final class BookRepository
                 isbn13 = COALESCE(NULLIF(:isbn13, ''), isbn13),
                 published_date = COALESCE(NULLIF(:published_date, ''), published_date),
                 language = COALESCE(NULLIF(:language, ''), language),
-                cover_url = COALESCE(NULLIF(:cover, ''), cover_url)
+                cover_url = COALESCE(NULLIF(:cover, ''), cover_url),
+                isbndb_synced_at = CASE
+                    WHEN :set_isbndb_sync = 1 THEN :isbndb_synced_at
+                    ELSE isbndb_synced_at
+                END
             WHERE id = :id
             LIMIT 1
         ");
+
+        $metadataSource = $payload['metadataSource'] ?? $defaultSource;
+        $setIsbnDbSync = $metadataSource === 'isbndb' ? 1 : 0;
 
         $stmt->execute([
             'gid' => $payload['googleVolumeId'] ?? null,
             'owid' => $payload['openLibraryWorkId'] ?? null,
             'oeid' => $payload['openLibraryEditionId'] ?? null,
             'isbndb_bid' => $payload['isbnDbBookId'] ?? null,
-            'metadata_source' => $payload['metadataSource'] ?? $defaultSource,
+            'metadata_source' => $metadataSource,
             'title' => $payload['title'] ?? '',
             'author' => $payload['author'] ?? '',
             'genre' => $payload['genre'] ?? null,
-            'pages' => (int) ($payload['pages'] ?? 0),
+            'pages' => max(0, (int) ($payload['pages'] ?? 0)),
             'publisher' => $payload['publisher'] ?? null,
             'isbn10' => $payload['isbn10'] ?? null,
             'isbn13' => $payload['isbn13'] ?? null,
             'published_date' => $payload['publishedDate'] ?? null,
             'language' => $payload['language'] ?? null,
             'cover' => $payload['coverUrl'] ?? null,
+            'set_isbndb_sync' => $setIsbnDbSync,
+            'isbndb_synced_at' => $setIsbnDbSync === 1
+                ? (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s')
+                : null,
             'id' => $bookId,
         ]);
+    }
+
+    private function touchIsbnDbSync(int $bookId): void
+    {
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare("
+            UPDATE books
+            SET isbndb_synced_at = :synced_at
+            WHERE id = :id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'synced_at' => (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s'),
+            'id' => $bookId,
+        ]);
+    }
+
+    private function normalizeCatalogPayload(array $payload, string $defaultSource): array
+    {
+        return [
+            'googleVolumeId' => $this->nullIfBlank($payload['googleVolumeId'] ?? null),
+            'openLibraryWorkId' => $this->nullIfBlank($payload['openLibraryWorkId'] ?? null),
+            'openLibraryEditionId' => $this->nullIfBlank($payload['openLibraryEditionId'] ?? null),
+            'isbnDbBookId' => $this->nullIfBlank($payload['isbnDbBookId'] ?? null),
+            'metadataSource' => $this->normalizeMetadataSource($payload['metadataSource'] ?? $defaultSource),
+            'title' => trim((string) ($payload['title'] ?? '')),
+            'author' => trim((string) ($payload['author'] ?? '')),
+            'genre' => $this->nullIfBlank($payload['genre'] ?? null),
+            'pages' => max(0, (int) ($payload['pages'] ?? 0)),
+            'publisher' => $this->nullIfBlank($payload['publisher'] ?? null),
+            'isbn10' => $this->nullIfBlank($payload['isbn10'] ?? null),
+            'isbn13' => $this->nullIfBlank($payload['isbn13'] ?? null),
+            'publishedDate' => $this->nullIfBlank($payload['publishedDate'] ?? null),
+            'language' => $this->nullIfBlank($payload['language'] ?? null),
+            'coverUrl' => $this->nullIfBlank($payload['coverUrl'] ?? null),
+            'summary' => $this->nullIfBlank($payload['summary'] ?? null),
+            'analysisWork' => $this->nullIfBlank($payload['analysisWork'] ?? null),
+            'status' => $payload['status'] ?? 'À lire',
+            'progressPages' => max(0, (int) ($payload['progressPages'] ?? 0)),
+            'rating' => $payload['rating'] ?? null,
+            'startedAt' => $payload['startedAt'] ?? null,
+            'finishedAt' => $payload['finishedAt'] ?? null,
+        ];
+    }
+
+    private function normalizeMetadataSource(mixed $value): string
+    {
+        $value = trim((string) ($value ?? ''));
+        if ($value === '') {
+            return 'manual';
+        }
+
+        $allowed = ['manual', 'google_books', 'open_library', 'isbndb', 'merged'];
+        return in_array($value, $allowed, true) ? $value : 'manual';
+    }
+
+    private function nullIfBlank(mixed $value): ?string
+    {
+        $value = trim((string) ($value ?? ''));
+        return $value === '' ? null : $value;
     }
 }

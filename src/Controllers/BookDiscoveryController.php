@@ -63,7 +63,7 @@ final class BookDiscoveryController
         $payload = $service->fetchImportPayload($provider, $providerBookId);
 
         $payload['status'] = $body['status'] ?? 'À lire';
-        $payload['progressPages'] = isset($body['progressPages']) ? (int) $body['progressPages'] : 0;
+        $payload['progressPages'] = isset($body['progressPages']) ? max(0, (int) $body['progressPages']) : 0;
         $payload['summary'] = $body['summary'] ?? ($payload['summary'] ?? ($payload['description'] ?? null));
         $payload['analysisWork'] = $body['analysisWork'] ?? null;
         $payload['rating'] = $body['rating'] ?? null;
@@ -160,8 +160,8 @@ final class BookDiscoveryController
             'startedAt' => $r['started_at'] ?? null,
             'finishedAt' => $r['finished_at'] ?? null,
             'publisher' => $r['publisher'] ?? null,
-            'isbn10' => $r['isbn10'] ?? ($r['isbn10'] ?? null),
-            'isbn13' => $r['isbn13'] ?? ($r['isbn13'] ?? null),
+            'isbn10' => $r['isbn10'] ?? null,
+            'isbn13' => $r['isbn13'] ?? null,
             'publishedDate' => $r['published_date'] ?? null,
             'language' => $r['language'] ?? null,
             'metadataSource' => $r['metadata_source'] ?? null,

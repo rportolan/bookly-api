@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Env;
+use App\Core\HttpException;
 use App\Repositories\GoogleBooksCacheRepository;
 use App\Repositories\IsbnDbCacheRepository;
 use App\Repositories\OpenLibraryCacheRepository;
@@ -12,27 +13,44 @@ final class BookDiscoveryService
 {
     public function search(string $query, int $limit = 10): array
     {
+        $query = trim($query);
+        if ($query === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'q'], 'Missing q');
+        }
+
         $limit = max(1, min(20, $limit));
 
-        $primary = $this->searchIsbnDb($query, $limit);
-        $fallbackGoogle = $this->searchGoogle($query, $limit);
-        $fallbackOpen = $this->searchOpenLibrary($query, $limit);
+        $isbnDb = $this->searchIsbnDb($query, min(20, max($limit, 10)));
+        $isbnDbItems = $this->scoreAndSortItems($isbnDb['items'] ?? [], $query);
 
-        $merged = $this->mergeResults(
-            $primary['items'] ?? [],
-            $fallbackGoogle['items'] ?? [],
-            $fallbackOpen['items'] ?? []
-        );
+        $shouldUseGoogleFallback = $this->shouldUseGoogleFallback($isbnDbItems, $limit, $query);
+        $shouldUseOpenLibraryFallback = $this->shouldUseOpenLibraryFallback($isbnDbItems, $limit, $query);
 
+        $googleItems = [];
+        $openItems = [];
+
+        if ($shouldUseGoogleFallback) {
+            $google = $this->searchGoogle($query, min(20, max($limit, 10)));
+            $googleItems = $this->scoreAndSortItems($google['items'] ?? [], $query);
+        }
+
+        if ($shouldUseOpenLibraryFallback) {
+            $open = $this->searchOpenLibrary($query, min(20, max($limit, 10)));
+            $openItems = $this->scoreAndSortItems($open['items'] ?? [], $query);
+        }
+
+        $merged = $this->mergeResults($isbnDbItems, $googleItems, $openItems, $query);
         $responseItems = array_slice($merged, 0, $limit);
 
         return [
             'meta' => [
                 'primarySource' => 'isbndb',
                 'totalItems' => count($responseItems),
-                'hasIsbnDbResults' => count($primary['items'] ?? []) > 0,
-                'googleFallbackUsed' => $this->containsSource($responseItems, 'google_books'),
-                'openLibraryFallbackUsed' => $this->containsSource($responseItems, 'open_library'),
+                'hasIsbnDbResults' => count($isbnDbItems) > 0,
+                'googleFallbackUsed' => $shouldUseGoogleFallback && $this->containsPrimarySource($responseItems, 'google_books'),
+                'openLibraryFallbackUsed' => $shouldUseOpenLibraryFallback && $this->containsPrimarySource($responseItems, 'open_library'),
+                'googleEnrichmentUsed' => $this->containsAlternateSource($responseItems, 'google_books'),
+                'openLibraryEnrichmentUsed' => $this->containsAlternateSource($responseItems, 'open_library'),
             ],
             'items' => $responseItems,
         ];
@@ -43,24 +61,57 @@ final class BookDiscoveryService
         $provider = trim($provider);
         $providerBookId = trim($providerBookId);
 
-        if ($provider === 'isbndb') {
-            $raw = (new IsbnDbClient())->getBook($providerBookId);
-            $book = $raw['book'] ?? $raw;
-            return $this->normalizeIsbnDbBook($book);
+        if ($provider === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'provider'], 'Missing provider');
         }
 
-        if ($provider === 'google_books') {
-            $volume = (new GoogleBooksClient())->getVolume($providerBookId);
-            return $this->normalizeGoogleVolumeForImport($volume);
+        if ($providerBookId === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'providerBookId'], 'Missing providerBookId');
         }
 
-        if ($provider === 'open_library') {
-            $client = new OpenLibraryClient();
-            $edition = $client->getEdition($providerBookId);
-            return $this->normalizeOpenLibraryEditionForImport($client, $edition);
-        }
+        return match ($provider) {
+            'isbndb' => $this->fetchIsbnDbImportPayload($providerBookId),
+            'google_books' => $this->fetchGoogleImportPayload($providerBookId),
+            'open_library' => $this->fetchOpenLibraryImportPayload($providerBookId),
+            default => throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'provider', 'allowed' => ['isbndb', 'google_books', 'open_library']],
+                'Invalid provider'
+            ),
+        };
+    }
 
-        throw new \InvalidArgumentException('Unsupported provider: ' . $provider);
+    private function fetchIsbnDbImportPayload(string $providerBookId): array
+    {
+        $raw = (new IsbnDbClient())->getBook($providerBookId);
+        $book = is_array($raw['book'] ?? null) ? $raw['book'] : $raw;
+
+        $item = $this->normalizeIsbnDbBook($book);
+
+        return [
+            ...$item,
+            'summary' => $item['description'],
+        ];
+    }
+
+    private function fetchGoogleImportPayload(string $providerBookId): array
+    {
+        $volume = (new GoogleBooksClient())->getVolume($providerBookId);
+        $item = $this->normalizeGoogleVolumeItem($volume);
+
+        return [
+            ...$item,
+            'summary' => $item['description'],
+        ];
+    }
+
+    private function fetchOpenLibraryImportPayload(string $providerBookId): array
+    {
+        $client = new OpenLibraryClient();
+        $edition = $client->getEdition($providerBookId);
+
+        return $this->normalizeOpenLibraryEditionForImport($client, $edition);
     }
 
     private function searchIsbnDb(string $query, int $limit): array
@@ -70,6 +121,7 @@ final class BookDiscoveryService
             'provider' => 'isbndb',
             'q' => $this->normalizeQuery($query),
             'limit' => $limit,
+            'v' => 'search_v2',
         ], JSON_UNESCAPED_UNICODE));
 
         $cacheRepo = new IsbnDbCacheRepository();
@@ -81,15 +133,21 @@ final class BookDiscoveryService
         }
 
         $items = [];
+
         try {
             $raw = (new IsbnDbClient())->searchBooks($query, $limit, 1, $this->guessIsbnDbColumn($query));
             $books = $raw['books'] ?? [];
+
             if (is_array($books)) {
                 foreach ($books as $book) {
                     if (!is_array($book)) {
                         continue;
                     }
-                    $items[] = $this->normalizeIsbnDbBook($book);
+
+                    $normalized = $this->normalizeIsbnDbBook($book);
+                    if ($normalized !== null) {
+                        $items[] = $normalized;
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -127,6 +185,7 @@ final class BookDiscoveryService
             'limit' => $limit,
             'lang' => strtolower($lang),
             'country' => strtoupper($country),
+            'v' => 'search_v2',
         ], JSON_UNESCAPED_UNICODE));
 
         $cacheRepo = new GoogleBooksCacheRepository();
@@ -138,16 +197,22 @@ final class BookDiscoveryService
         }
 
         $items = [];
+
         try {
+            $client = new GoogleBooksClient();
             $raw = $this->looksLikeIsbn($query)
-                ? (new GoogleBooksClient())->searchByIsbn($this->normalizeIsbn($query), $limit, $lang, $country)
-                : (new GoogleBooksClient())->searchVolumes($query, $limit, $lang, $country);
+                ? $client->searchByIsbn($this->normalizeIsbn($query), $limit, $lang, $country)
+                : $client->searchVolumes($query, $limit, $lang, $country);
 
             foreach (($raw['items'] ?? []) as $it) {
                 if (!is_array($it)) {
                     continue;
                 }
-                $items[] = $this->normalizeGoogleVolumeItem($it);
+
+                $normalized = $this->normalizeGoogleVolumeItem($it);
+                if ($normalized !== null) {
+                    $items[] = $normalized;
+                }
             }
         } catch (\Throwable $e) {
             error_log('[BOOKLY][Google fallback search] ' . $e->getMessage());
@@ -179,6 +244,7 @@ final class BookDiscoveryService
             'provider' => 'open_library_fallback',
             'q' => $this->normalizeQuery($query),
             'limit' => $limit,
+            'v' => 'search_v2',
         ], JSON_UNESCAPED_UNICODE));
 
         $cacheRepo = new OpenLibraryCacheRepository();
@@ -190,10 +256,12 @@ final class BookDiscoveryService
         }
 
         $items = [];
+
         try {
+            $client = new OpenLibraryClient();
             $raw = $this->looksLikeIsbn($query)
-                ? (new OpenLibraryClient())->searchByIsbn($this->normalizeIsbn($query))
-                : (new OpenLibraryClient())->searchBooks($query, $limit);
+                ? $client->searchByIsbn($this->normalizeIsbn($query))
+                : $client->searchBooks($query, $limit);
 
             foreach (($raw['docs'] ?? []) as $doc) {
                 if (!is_array($doc)) {
@@ -228,7 +296,58 @@ final class BookDiscoveryService
         return $response;
     }
 
-    private function mergeResults(array $isbndb, array $google, array $open): array
+    private function shouldUseGoogleFallback(array $isbnDbItems, int $limit, string $query): bool
+    {
+        if (count($isbnDbItems) === 0) {
+            return true;
+        }
+
+        $strongCount = 0;
+        foreach (array_slice($isbnDbItems, 0, $limit) as $item) {
+            if (($item['qualityScore'] ?? 0) >= 60) {
+                $strongCount++;
+            }
+        }
+
+        if ($strongCount >= min(5, $limit)) {
+            return false;
+        }
+
+        if ($this->queryLooksFrench($query) && !$this->hasStrongFrenchCoverage($isbnDbItems, $limit)) {
+            return true;
+        }
+
+        return count($isbnDbItems) < $limit;
+    }
+
+    private function shouldUseOpenLibraryFallback(array $isbnDbItems, int $limit, string $query): bool
+    {
+        if (count($isbnDbItems) === 0) {
+            return true;
+        }
+
+        if ($this->queryLooksFrench($query) && !$this->hasStrongFrenchCoverage($isbnDbItems, $limit)) {
+            return true;
+        }
+
+        return count($isbnDbItems) < max(3, (int) ceil($limit / 2));
+    }
+
+    private function hasStrongFrenchCoverage(array $items, int $limit): bool
+    {
+        $count = 0;
+
+        foreach (array_slice($items, 0, $limit) as $item) {
+            $lang = mb_strtolower(trim((string) ($item['language'] ?? '')));
+            if ($lang === 'fr' || $lang === 'fre' || $lang === 'french' || $lang === 'français') {
+                $count++;
+            }
+        }
+
+        return $count >= 1;
+    }
+
+    private function mergeResults(array $isbndb, array $google, array $open, string $query): array
     {
         $bucket = [];
 
@@ -239,6 +358,7 @@ final class BookDiscoveryService
                 }
 
                 $key = $this->resultKey($item);
+
                 if (!isset($bucket[$key])) {
                     $bucket[$key] = $item;
                     continue;
@@ -249,68 +369,218 @@ final class BookDiscoveryService
         }
 
         $items = array_values($bucket);
+
+        foreach ($items as &$item) {
+            $item['qualityScore'] = $this->qualityScore($item, $query);
+        }
+        unset($item);
+
         usort($items, function (array $a, array $b): int {
-            return $this->qualityScore($b) <=> $this->qualityScore($a);
+            return ($b['qualityScore'] ?? 0) <=> ($a['qualityScore'] ?? 0);
         });
 
-        return $items;
+        return array_values(array_filter($items, fn(array $item): bool => ($item['qualityScore'] ?? 0) > 0));
     }
 
     private function mergeTwo(array $left, array $right): array
     {
-        $preferLeft = ($left['source'] ?? '') === 'isbndb';
+        $priority = [
+            'isbndb' => 3,
+            'google_books' => 2,
+            'open_library' => 1,
+        ];
 
-        $merged = $preferLeft ? $left : $right;
+        $leftSource = (string) ($left['source'] ?? '');
+        $rightSource = (string) ($right['source'] ?? '');
+
+        $preferLeft = ($priority[$leftSource] ?? 0) >= ($priority[$rightSource] ?? 0);
+
+        $primary = $preferLeft ? $left : $right;
         $secondary = $preferLeft ? $right : $left;
 
         foreach ([
-            'title', 'author', 'publisher', 'description', 'publishedDate', 'language',
-            'genre', 'coverUrl', 'isbn10', 'isbn13'
+            'title',
+            'author',
+            'publisher',
+            'description',
+            'publishedDate',
+            'language',
+            'genre',
+            'coverUrl',
+            'isbn10',
+            'isbn13',
+            'metadataSource',
+            'sourceBookId',
+            'isbnDbBookId',
+            'googleVolumeId',
+            'openLibraryEditionId',
+            'openLibraryWorkId',
         ] as $field) {
-            if (($merged[$field] ?? null) === null || trim((string) ($merged[$field] ?? '')) === '') {
-                $merged[$field] = $secondary[$field] ?? null;
+            if ($this->isBlank($primary[$field] ?? null) && !$this->isBlank($secondary[$field] ?? null)) {
+                $primary[$field] = $secondary[$field];
             }
         }
 
-        if ((int) ($merged['pages'] ?? 0) <= 0 && (int) ($secondary['pages'] ?? 0) > 0) {
-            $merged['pages'] = (int) $secondary['pages'];
+        if ((int) ($primary['pages'] ?? 0) <= 0 && (int) ($secondary['pages'] ?? 0) > 0) {
+            $primary['pages'] = (int) $secondary['pages'];
         }
 
-        $authors = array_merge(
-            is_array($merged['authors'] ?? null) ? $merged['authors'] : [],
-            is_array($secondary['authors'] ?? null) ? $secondary['authors'] : []
-        );
-        $authors = array_values(array_unique(array_filter(array_map('strval', $authors))));
-        $merged['authors'] = $authors;
+        $primaryAuthors = is_array($primary['authors'] ?? null) ? $primary['authors'] : [];
+        $secondaryAuthors = is_array($secondary['authors'] ?? null) ? $secondary['authors'] : [];
 
-        $alternateSources = array_merge(
-            is_array($merged['alternateSources'] ?? null) ? $merged['alternateSources'] : [],
-            [[
-                'source' => $secondary['source'] ?? 'unknown',
-                'sourceBookId' => $secondary['sourceBookId'] ?? null,
-            ]]
-        );
-        $merged['alternateSources'] = array_values(array_unique($alternateSources, SORT_REGULAR));
+        $primary['authors'] = array_values(array_unique(array_filter(array_map(
+            fn($v) => trim((string) $v),
+            array_merge($primaryAuthors, $secondaryAuthors)
+        ), fn(string $v): bool => $v !== '')));
 
-        $merged['qualityScore'] = $this->qualityScore($merged);
+        if ($this->isBlank($primary['author'] ?? null) && count($primary['authors']) > 0) {
+            $primary['author'] = $primary['authors'][0];
+        }
 
-        return $merged;
+        $alternateSources = is_array($primary['alternateSources'] ?? null) ? $primary['alternateSources'] : [];
+
+        $secondaryAlt = [
+            'source' => $secondary['source'] ?? null,
+            'sourceBookId' => $secondary['sourceBookId'] ?? null,
+        ];
+
+        if (!$this->isBlank($secondaryAlt['source'])) {
+            $alternateSources[] = $secondaryAlt;
+        }
+
+        foreach ((array) ($secondary['alternateSources'] ?? []) as $alt) {
+            if (is_array($alt) && !$this->isBlank($alt['source'] ?? null)) {
+                $alternateSources[] = [
+                    'source' => $alt['source'] ?? null,
+                    'sourceBookId' => $alt['sourceBookId'] ?? null,
+                ];
+            }
+        }
+
+        $primary['alternateSources'] = array_values(array_unique($alternateSources, SORT_REGULAR));
+
+        return $primary;
     }
 
-    private function qualityScore(array $item): int
+    private function scoreAndSortItems(array $items, string $query): array
+    {
+        $scored = [];
+
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $score = $this->qualityScore($item, $query);
+            $item['qualityScore'] = $score;
+
+            if ($score > 0) {
+                $scored[] = $item;
+            }
+        }
+
+        usort($scored, function (array $a, array $b): int {
+            return ($b['qualityScore'] ?? 0) <=> ($a['qualityScore'] ?? 0);
+        });
+
+        return $scored;
+    }
+
+    private function qualityScore(array $item, string $query): int
     {
         $score = 0;
 
-        if (trim((string) ($item['title'] ?? '')) !== '') $score += 3;
-        if (trim((string) ($item['author'] ?? '')) !== '') $score += 3;
-        if ((int) ($item['pages'] ?? 0) > 0) $score += 1;
-        if (trim((string) ($item['publisher'] ?? '')) !== '') $score += 1;
-        if (trim((string) ($item['coverUrl'] ?? '')) !== '') $score += 3;
-        if (trim((string) ($item['description'] ?? '')) !== '') $score += 2;
-        if (trim((string) ($item['isbn13'] ?? '')) !== '' || trim((string) ($item['isbn10'] ?? '')) !== '') $score += 3;
-        if (($item['source'] ?? '') === 'isbndb') $score += 2;
+        $title = trim((string) ($item['title'] ?? ''));
+        $author = trim((string) ($item['author'] ?? ''));
+        $publisher = trim((string) ($item['publisher'] ?? ''));
+        $description = trim((string) ($item['description'] ?? ''));
+        $genre = trim((string) ($item['genre'] ?? ''));
+        $language = trim((string) ($item['language'] ?? ''));
+        $source = trim((string) ($item['source'] ?? ''));
 
-        return $score;
+        $normalizedQuery = $this->normalizeQuery($query);
+        $normalizedTitle = $this->normalizeTextForCompare($title);
+        $normalizedAuthor = $this->normalizeTextForCompare($author);
+        $normalizedPublisher = $this->normalizeTextForCompare($publisher);
+        $normalizedGenre = $this->normalizeTextForCompare($genre);
+        $normalizedDescription = $this->normalizeTextForCompare($description);
+
+        if ($title !== '') $score += 10;
+        if ($author !== '') $score += 10;
+        if ((int) ($item['pages'] ?? 0) > 0) $score += 5;
+        if ($publisher !== '') $score += 4;
+        if (trim((string) ($item['coverUrl'] ?? '')) !== '') $score += 8;
+        if ($description !== '') $score += 8;
+        if (trim((string) ($item['isbn13'] ?? '')) !== '' || trim((string) ($item['isbn10'] ?? '')) !== '') $score += 10;
+
+        if ($source === 'isbndb') $score += 10;
+        if ($source === 'google_books') $score += 6;
+        if ($source === 'open_library') $score += 4;
+
+        if ($normalizedTitle === $normalizedQuery) {
+            $score += 35;
+        } elseif ($normalizedTitle !== '' && str_contains($normalizedTitle, $normalizedQuery)) {
+            $score += 22;
+        } elseif ($this->tokenOverlapScore($normalizedQuery, $normalizedTitle) >= 0.8) {
+            $score += 16;
+        } elseif ($this->tokenOverlapScore($normalizedQuery, $normalizedTitle) >= 0.5) {
+            $score += 8;
+        }
+
+        $expectedAuthor = $this->guessAuthorFromQuery($query);
+        if ($expectedAuthor !== null) {
+            $expectedAuthorNorm = $this->normalizeTextForCompare($expectedAuthor);
+
+            if ($normalizedAuthor !== '' && str_contains($normalizedAuthor, $expectedAuthorNorm)) {
+                $score += 30;
+            } else {
+                $score -= 18;
+            }
+        }
+
+        if ($this->queryLooksFrench($query)) {
+            if ($this->isFrenchishLanguage($language)) {
+                $score += 18;
+            } elseif ($language !== '') {
+                $score -= 8;
+            }
+
+            if ($this->looksLikeFrenchPublisher($publisher)) {
+                $score += 8;
+            }
+        }
+
+        if ($description !== '') {
+            if (str_contains($normalizedDescription, $normalizedQuery)) {
+                $score += 8;
+            }
+
+            if ($expectedAuthor !== null && str_contains($normalizedDescription, $this->normalizeTextForCompare($expectedAuthor))) {
+                $score += 6;
+            }
+
+            if ($this->looksLikeJunkDescription($normalizedDescription)) {
+                $score -= 25;
+            }
+        }
+
+        if ($this->looksLikeNoiseTitle($normalizedTitle)) {
+            $score -= 40;
+        }
+
+        if ($this->looksLikeNoiseGenre($normalizedGenre)) {
+            $score -= 20;
+        }
+
+        if ($this->looksLikeNoisePublisher($normalizedPublisher)) {
+            $score -= 10;
+        }
+
+        if ($title === '' || $author === '') {
+            $score -= 20;
+        }
+
+        return max(0, $score);
     }
 
     private function resultKey(array $item): string
@@ -325,17 +595,25 @@ final class BookDiscoveryService
             return 'isbn10:' . $isbn10;
         }
 
-        return 'fallback:' . mb_strtolower(trim((string) ($item['title'] ?? ''))) . '|' .
-            mb_strtolower(trim((string) ($item['author'] ?? '')));
+        return 'fallback:' .
+            $this->normalizeTextForCompare((string) ($item['title'] ?? '')) . '|' .
+            $this->normalizeTextForCompare((string) ($item['author'] ?? ''));
     }
 
-    private function containsSource(array $items, string $source): bool
+    private function containsPrimarySource(array $items, string $source): bool
     {
         foreach ($items as $item) {
             if (($item['source'] ?? '') === $source) {
                 return true;
             }
+        }
 
+        return false;
+    }
+
+    private function containsAlternateSource(array $items, string $source): bool
+    {
+        foreach ($items as $item) {
             foreach (($item['alternateSources'] ?? []) as $alt) {
                 if (($alt['source'] ?? '') === $source) {
                     return true;
@@ -346,21 +624,24 @@ final class BookDiscoveryService
         return false;
     }
 
-    private function normalizeIsbnDbBook(array $book): array
+    private function normalizeIsbnDbBook(array $book): ?array
     {
+        $title = trim((string) ($book['title'] ?? ''));
+        if ($title === '') {
+            return null;
+        }
+
         $authors = [];
         if (isset($book['authors']) && is_array($book['authors'])) {
             foreach ($book['authors'] as $author) {
                 if (is_array($author)) {
                     $name = trim((string) ($author['name'] ?? ''));
-                    if ($name !== '') {
-                        $authors[] = $name;
-                    }
                 } else {
                     $name = trim((string) $author);
-                    if ($name !== '') {
-                        $authors[] = $name;
-                    }
+                }
+
+                if ($name !== '') {
+                    $authors[] = $name;
                 }
             }
         }
@@ -368,41 +649,57 @@ final class BookDiscoveryService
         $authors = array_values(array_unique($authors));
 
         $cover = $book['image'] ?? ($book['image_url'] ?? ($book['cover'] ?? null));
-        $description = $book['synopsis'] ?? ($book['overview'] ?? ($book['description'] ?? null));
+        $descriptionRaw = $book['synopsis'] ?? ($book['overview'] ?? ($book['description'] ?? null));
+        $description = TextSanitizer::htmlToText(is_string($descriptionRaw) ? $descriptionRaw : null);
+
         $publisher = null;
         if (isset($book['publisher']) && is_array($book['publisher'])) {
-            $publisher = $book['publisher']['name'] ?? null;
+            $publisher = trim((string) ($book['publisher']['name'] ?? ''));
         } else {
-            $publisher = $book['publisher'] ?? null;
+            $publisher = trim((string) ($book['publisher'] ?? ''));
         }
+
+        $publisher = $publisher !== '' ? $publisher : null;
 
         $language = $book['language'] ?? null;
         if (is_array($language)) {
             $language = $language['code'] ?? ($language['name'] ?? null);
         }
+        $language = $this->nullIfBlank($language);
 
-        $date = $book['date_published'] ?? ($book['date_published_text'] ?? ($book['publication_date'] ?? null));
-        $isbn13 = $book['isbn13'] ?? null;
-        $isbn10 = $book['isbn10'] ?? null;
+        $date = $this->nullIfBlank(
+            $book['date_published']
+                ?? ($book['date_published_text'] ?? ($book['publication_date'] ?? null))
+        );
+
+        $isbn13 = $this->normalizePossibleIsbn($book['isbn13'] ?? null, 13);
+        $isbn10 = $this->normalizePossibleIsbn($book['isbn10'] ?? null, 10);
+
+        $bookId = $this->nullIfBlank($book['book_id'] ?? null);
+        $sourceBookId = $bookId ?? $isbn13 ?? $isbn10 ?? null;
+
+        if ($sourceBookId === null) {
+            return null;
+        }
 
         return [
             'source' => 'isbndb',
-            'sourceBookId' => (string) ($book['book_id'] ?? ($book['isbn13'] ?? ($book['isbn'] ?? ''))),
-            'isbnDbBookId' => (string) ($book['book_id'] ?? ''),
+            'sourceBookId' => $sourceBookId,
+            'isbnDbBookId' => $bookId,
             'googleVolumeId' => null,
             'openLibraryEditionId' => null,
             'openLibraryWorkId' => null,
-            'title' => (string) ($book['title'] ?? ''),
-            'author' => count($authors) > 0 ? $authors[0] : (string) ($book['author'] ?? ''),
+            'title' => $title,
+            'author' => count($authors) > 0 ? $authors[0] : trim((string) ($book['author'] ?? '')),
             'authors' => $authors,
-            'publisher' => is_string($publisher) ? trim($publisher) : null,
+            'publisher' => $publisher,
             'pages' => isset($book['pages']) && is_numeric($book['pages']) ? (int) $book['pages'] : 0,
-            'coverUrl' => is_string($cover) && trim($cover) !== '' ? trim($cover) : null,
-            'isbn10' => is_string($isbn10) && trim($isbn10) !== '' ? trim($isbn10) : null,
-            'isbn13' => is_string($isbn13) && trim($isbn13) !== '' ? trim($isbn13) : null,
-            'publishedDate' => is_string($date) && trim($date) !== '' ? trim($date) : null,
-            'description' => is_string($description) && trim($description) !== '' ? trim($description) : null,
-            'language' => is_string($language) && trim($language) !== '' ? trim($language) : null,
+            'coverUrl' => $this->nullIfBlank($cover),
+            'isbn10' => $isbn10,
+            'isbn13' => $isbn13,
+            'publishedDate' => $date,
+            'description' => $description,
+            'language' => $language,
             'genre' => $this->normalizeGenre($book['subjects'] ?? ($book['subject_ids'] ?? null)),
             'metadataSource' => 'isbndb',
             'alternateSources' => [],
@@ -410,17 +707,27 @@ final class BookDiscoveryService
         ];
     }
 
-    private function normalizeGoogleVolumeItem(array $it): array
+    private function normalizeGoogleVolumeItem(array $it): ?array
     {
-        $id = (string) ($it['id'] ?? '');
+        $id = trim((string) ($it['id'] ?? ''));
         $info = $it['volumeInfo'] ?? [];
+
+        $title = trim((string) ($info['title'] ?? ''));
+        if ($title === '') {
+            return null;
+        }
 
         $authors = $info['authors'] ?? [];
         if (!is_array($authors)) {
             $authors = [];
         }
 
-        $publisher = $info['publisher'] ?? null;
+        $authors = array_values(array_filter(array_map(
+            fn($v) => trim((string) $v),
+            $authors
+        ), fn(string $v): bool => $v !== ''));
+
+        $publisher = $this->nullIfBlank($info['publisher'] ?? null);
         $pageCount = isset($info['pageCount']) ? (int) $info['pageCount'] : 0;
 
         $imageLinks = $info['imageLinks'] ?? [];
@@ -430,35 +737,26 @@ final class BookDiscoveryService
 
         return [
             'source' => 'google_books',
-            'sourceBookId' => $id,
+            'sourceBookId' => $id !== '' ? $id : ($isbn13 ?? ($isbn10 ?? $title)),
             'isbnDbBookId' => null,
-            'googleVolumeId' => $id,
+            'googleVolumeId' => $id !== '' ? $id : null,
             'openLibraryEditionId' => null,
             'openLibraryWorkId' => null,
-            'title' => (string) ($info['title'] ?? ''),
-            'author' => count($authors) > 0 ? (string) $authors[0] : '',
-            'authors' => array_values(array_map('strval', $authors)),
-            'publisher' => is_string($publisher) ? trim($publisher) : null,
+            'title' => $title,
+            'author' => count($authors) > 0 ? $authors[0] : '',
+            'authors' => $authors,
+            'publisher' => $publisher,
             'pages' => $pageCount,
             'coverUrl' => $cover ? str_replace('http://', 'https://', (string) $cover) : null,
             'isbn10' => $isbn10,
             'isbn13' => $isbn13,
-            'publishedDate' => $info['publishedDate'] ?? null,
-            'description' => TextSanitizer::htmlToText($info['description'] ?? null),
-            'language' => $info['language'] ?? null,
+            'publishedDate' => $this->nullIfBlank($info['publishedDate'] ?? null),
+            'description' => TextSanitizer::htmlToText(is_string($info['description'] ?? null) ? $info['description'] : null),
+            'language' => $this->nullIfBlank($info['language'] ?? null),
             'genre' => $this->normalizeGenre($info['categories'] ?? null),
             'metadataSource' => 'google_books',
             'alternateSources' => [],
             'qualityScore' => 0,
-        ];
-    }
-
-    private function normalizeGoogleVolumeForImport(array $volume): array
-    {
-        $item = $this->normalizeGoogleVolumeItem($volume);
-        return [
-            ...$item,
-            'summary' => $item['description'],
         ];
     }
 
@@ -478,6 +776,11 @@ final class BookDiscoveryService
         if (!is_array($authorNames)) {
             $authorNames = [];
         }
+
+        $authors = array_values(array_filter(array_map(
+            fn($v) => trim((string) $v),
+            $authorNames
+        ), fn(string $v): bool => $v !== ''));
 
         $publishers = $doc['publisher'] ?? [];
         if (!is_array($publishers)) {
@@ -503,8 +806,8 @@ final class BookDiscoveryService
             'openLibraryEditionId' => $editionId,
             'openLibraryWorkId' => $workId,
             'title' => $title,
-            'author' => count($authorNames) > 0 ? trim((string) $authorNames[0]) : '',
-            'authors' => array_values(array_filter(array_map('strval', $authorNames))),
+            'author' => count($authors) > 0 ? $authors[0] : '',
+            'authors' => $authors,
             'publisher' => count($publishers) > 0 ? trim((string) $publishers[0]) : null,
             'pages' => isset($doc['number_of_pages_median']) && is_numeric($doc['number_of_pages_median'])
                 ? (int) $doc['number_of_pages_median']
@@ -544,11 +847,13 @@ final class BookDiscoveryService
             if (!is_array($authorRef)) {
                 continue;
             }
+
             $key = $authorRef['key'] ?? ($authorRef['author']['key'] ?? null);
             $authorId = $this->extractOlid($key, '/authors/');
             if (!$authorId) {
                 continue;
             }
+
             try {
                 $author = $client->getAuthor($authorId);
                 $name = trim((string) ($author['name'] ?? ''));
@@ -565,8 +870,8 @@ final class BookDiscoveryService
             $publisher = trim((string) $edition['publishers'][0]) ?: null;
         }
 
-        $isbn10 = isset($edition['isbn_10'][0]) ? trim((string) $edition['isbn_10'][0]) : null;
-        $isbn13 = isset($edition['isbn_13'][0]) ? trim((string) $edition['isbn_13'][0]) : null;
+        $isbn10 = isset($edition['isbn_10'][0]) ? $this->normalizePossibleIsbn($edition['isbn_10'][0], 10) : null;
+        $isbn13 = isset($edition['isbn_13'][0]) ? $this->normalizePossibleIsbn($edition['isbn_13'][0], 13) : null;
 
         $coverUrl = null;
         if (isset($edition['covers'][0]) && is_numeric($edition['covers'][0])) {
@@ -580,6 +885,8 @@ final class BookDiscoveryService
             $summary = $this->extractOpenLibraryDescription($work);
         }
 
+        $summary = TextSanitizer::htmlToText($summary);
+
         return [
             'source' => 'open_library',
             'sourceBookId' => $editionId ?? '',
@@ -587,16 +894,16 @@ final class BookDiscoveryService
             'googleVolumeId' => null,
             'openLibraryEditionId' => $editionId,
             'openLibraryWorkId' => $workId,
-            'title' => (string) ($edition['title'] ?? ''),
-            'author' => count($authors) > 0 ? (string) $authors[0] : '',
+            'title' => trim((string) ($edition['title'] ?? '')),
+            'author' => count($authors) > 0 ? $authors[0] : '',
             'authors' => array_values(array_unique($authors)),
             'publisher' => $publisher,
             'pages' => isset($edition['number_of_pages']) && is_numeric($edition['number_of_pages'])
                 ? (int) $edition['number_of_pages']
                 : 0,
             'coverUrl' => $coverUrl,
-            'isbn10' => $isbn10 ?: null,
-            'isbn13' => $isbn13 ?: null,
+            'isbn10' => $isbn10,
+            'isbn13' => $isbn13,
             'publishedDate' => isset($edition['publish_date']) ? trim((string) $edition['publish_date']) : null,
             'description' => $summary,
             'summary' => $summary,
@@ -626,11 +933,11 @@ final class BookDiscoveryService
             $identifier = trim((string) ($id['identifier'] ?? ''));
 
             if ($type === 'ISBN_10' && $identifier !== '') {
-                $isbn10 = $identifier;
+                $isbn10 = $this->normalizePossibleIsbn($identifier, 10);
             }
 
             if ($type === 'ISBN_13' && $identifier !== '') {
-                $isbn13 = $identifier;
+                $isbn13 = $this->normalizePossibleIsbn($identifier, 13);
             }
         }
 
@@ -647,15 +954,15 @@ final class BookDiscoveryService
         }
 
         foreach ($isbns as $isbn) {
-            $normalized = preg_replace('/[^0-9Xx]/', '', (string) $isbn) ?? '';
-            $len = strlen($normalized);
+            $normalized10 = $this->normalizePossibleIsbn($isbn, 10);
+            $normalized13 = $this->normalizePossibleIsbn($isbn, 13);
 
-            if ($len === 10 && $isbn10 === null) {
-                $isbn10 = $normalized;
+            if ($normalized10 !== null && $isbn10 === null) {
+                $isbn10 = $normalized10;
             }
 
-            if ($len === 13 && $isbn13 === null) {
-                $isbn13 = $normalized;
+            if ($normalized13 !== null && $isbn13 === null) {
+                $isbn13 = $normalized13;
             }
 
             if ($isbn10 !== null && $isbn13 !== null) {
@@ -783,8 +1090,224 @@ final class BookDiscoveryService
     private function normalizeQuery(string $q): string
     {
         $q = trim(mb_strtolower($q));
-        $q = preg_replace('/\s+/', ' ', $q) ?? $q;
+        $q = preg_replace('/\s+/u', ' ', $q) ?? $q;
         return $q;
+    }
+
+    private function normalizeTextForCompare(string $text): string
+    {
+        $text = mb_strtolower(trim($text));
+        $text = str_replace(['’', '\''], ' ', $text);
+        $text = str_replace(['-', '_', '/', ':', ';', ',', '.', '(', ')', '[', ']'], ' ', $text);
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
+    }
+
+    private function tokenOverlapScore(string $query, string $target): float
+    {
+        if ($query === '' || $target === '') {
+            return 0.0;
+        }
+
+        $qTokens = array_values(array_filter(explode(' ', $query), fn(string $t): bool => $t !== ''));
+        $tTokens = array_values(array_filter(explode(' ', $target), fn(string $t): bool => $t !== ''));
+
+        if (count($qTokens) === 0 || count($tTokens) === 0) {
+            return 0.0;
+        }
+
+        $matches = 0;
+        foreach ($qTokens as $qt) {
+            if (in_array($qt, $tTokens, true)) {
+                $matches++;
+            }
+        }
+
+        return $matches / max(1, count($qTokens));
+    }
+
+    private function queryLooksFrench(string $query): bool
+    {
+        $q = $this->normalizeTextForCompare($query);
+
+        if (preg_match('/[éèêëàâäîïôöùûüç]/u', $query) === 1) {
+            return true;
+        }
+
+        $markers = [
+            ' le ', ' la ', ' les ', ' de ', ' du ', ' des ',
+            ' l ', ' un ', ' une ', ' etranger', ' bel ami',
+            ' ferme des animaux', ' petit prince',
+        ];
+
+        $padded = ' ' . $q . ' ';
+        foreach ($markers as $marker) {
+            if (str_contains($padded, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function guessAuthorFromQuery(string $query): ?string
+    {
+        $q = $this->normalizeTextForCompare($query);
+
+        $map = [
+            'bel ami' => 'maupassant',
+            'bel-ami' => 'maupassant',
+            'etranger' => 'camus',
+            'l etranger' => 'camus',
+            'madame bovary' => 'flaubert',
+            'germinal' => 'zola',
+            'le horla' => 'maupassant',
+            'boule de suif' => 'maupassant',
+            'tartuffe' => 'moliere',
+            'le petit prince' => 'saint exupery',
+        ];
+
+        foreach ($map as $needle => $author) {
+            if (str_contains($q, $needle)) {
+                return $author;
+            }
+        }
+
+        return null;
+    }
+
+    private function looksLikeNoiseTitle(string $title): bool
+    {
+        if ($title === '') {
+            return false;
+        }
+
+        $needles = [
+            'calendar',
+            'kalender',
+            'planner',
+            'agenda',
+            'coloring book',
+            'colouring book',
+            'workbook',
+            'study guide',
+            'summary of',
+            'book review',
+            'icons',
+            'paradise found',
+        ];
+
+        foreach ($needles as $needle) {
+            if (str_contains($title, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function looksLikeNoiseGenre(string $genre): bool
+    {
+        if ($genre === '') {
+            return false;
+        }
+
+        $needles = [
+            'photography',
+            'arts',
+            'art',
+            'crafts',
+            'study aids',
+            'business',
+        ];
+
+        foreach ($needles as $needle) {
+            if (str_contains($genre, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function looksLikeNoisePublisher(string $publisher): bool
+    {
+        if ($publisher === '') {
+            return false;
+        }
+
+        $needles = [
+            'calendar',
+            'poster',
+        ];
+
+        foreach ($needles as $needle) {
+            if (str_contains($publisher, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function looksLikeJunkDescription(string $description): bool
+    {
+        if ($description === '') {
+            return false;
+        }
+
+        $needles = [
+            'this is a softcover book',
+            'in great shape',
+            'fan favorite',
+            'exclusive photo',
+        ];
+
+        foreach ($needles as $needle) {
+            if (str_contains($description, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function looksLikeFrenchPublisher(string $publisher): bool
+    {
+        $publisher = $this->normalizeTextForCompare($publisher);
+        if ($publisher === '') {
+            return false;
+        }
+
+        $needles = [
+            'gallimard',
+            'folio',
+            'grasset',
+            'larousse',
+            'flammarion',
+            'hachette',
+            'albin michel',
+            'bibebook',
+            'livre de poche',
+            'actes sud',
+            'seuil',
+            'robert laffont',
+            'j ai lu',
+        ];
+
+        foreach ($needles as $needle) {
+            if (str_contains($publisher, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isFrenchishLanguage(string $language): bool
+    {
+        $language = mb_strtolower(trim($language));
+        return in_array($language, ['fr', 'fre', 'fra', 'french', 'français', 'francais'], true);
     }
 
     private function looksLikeIsbn(string $q): bool
@@ -799,6 +1322,12 @@ final class BookDiscoveryService
         return preg_replace('/[^0-9Xx]/', '', trim($q)) ?? '';
     }
 
+    private function normalizePossibleIsbn(mixed $value, int $expectedLength): ?string
+    {
+        $normalized = preg_replace('/[^0-9Xx]/', '', trim((string) ($value ?? ''))) ?? '';
+        return strlen($normalized) === $expectedLength ? $normalized : null;
+    }
+
     private function guessIsbnDbColumn(string $query): ?string
     {
         if ($this->looksLikeIsbn($query)) {
@@ -811,10 +1340,23 @@ final class BookDiscoveryService
         }
 
         $parts = preg_split('/\s+/u', $query) ?: [];
-        if (count(array_values(array_filter($parts, fn(string $p): bool => trim($p) !== ''))) === 1 && preg_match('/^[\p{L}\p{N}\-\' ]+$/u', $query)) {
+        $parts = array_values(array_filter($parts, fn(string $p): bool => trim($p) !== ''));
+
+        if (count($parts) === 1 && preg_match('/^[\p{L}\p{N}\-\' ]+$/u', $query)) {
             return 'title';
         }
 
         return null;
+    }
+
+    private function isBlank(mixed $value): bool
+    {
+        return $this->nullIfBlank($value) === null;
+    }
+
+    private function nullIfBlank(mixed $value): ?string
+    {
+        $value = trim((string) ($value ?? ''));
+        return $value === '' ? null : $value;
     }
 }

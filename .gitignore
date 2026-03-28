@@ -4,3 +4,4 @@ vendor/
 node_modules/
 dbdata/
 .DS_Store
+.sfdx/
