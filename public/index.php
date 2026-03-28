@@ -23,6 +23,7 @@ use App\Controllers\LearnController;
 use App\Controllers\DashboardController;
 use App\Controllers\GoogleBooksController;
 use App\Controllers\OpenLibraryController;
+use App\Controllers\BookDiscoveryController;
 use App\Controllers\CardsController;
 use App\Controllers\QuizController;
 use App\Controllers\DictionaryController;
@@ -140,22 +141,23 @@ $router->add('GET', '/', function () {
 /**
  * Controllers
  */
-$health     = new HealthController();
-$auth       = new AuthController();
-$dashboard  = new DashboardController();
-$users      = new UsersController();
-$books      = new BooksController();
-$quotes     = new QuotesController();
-$vocab      = new VocabController();
-$chapters   = new ChaptersController();
-$quests     = new QuestsController();
-$reading    = new ReadingController();
-$learn      = new LearnController();
-$gbooks     = new GoogleBooksController();
-$olib       = new OpenLibraryController();
-$cards      = new CardsController();
-$quiz       = new QuizController();
-$dictionary = new DictionaryController();
+$health        = new HealthController();
+$auth          = new AuthController();
+$dashboard     = new DashboardController();
+$users         = new UsersController();
+$books         = new BooksController();
+$quotes        = new QuotesController();
+$vocab         = new VocabController();
+$chapters      = new ChaptersController();
+$quests        = new QuestsController();
+$reading       = new ReadingController();
+$learn         = new LearnController();
+$gbooks        = new GoogleBooksController();
+$olib          = new OpenLibraryController();
+$bookDiscovery = new BookDiscoveryController();
+$cards         = new CardsController();
+$quiz          = new QuizController();
+$dictionary    = new DictionaryController();
 
 /**
  * API prefix
@@ -165,7 +167,7 @@ $prefix = '/v1';
 // Health
 $router->add('GET', "{$prefix}/health", $health);
 
-// Auth — routes sensibles protégées par rate limiting
+// Auth
 $router->add('POST', "{$prefix}/auth/register", function () use ($auth) {
     RateLimiter::check('register:' . RateLimiter::ip(), 5, 3600);
     $auth->register();
@@ -205,18 +207,21 @@ $router->add('PATCH',  "{$prefix}/me/password", fn() => $users->changePassword()
 $router->add('DELETE', "{$prefix}/me",          fn() => $users->deleteMe());
 
 // Books
-$router->add('GET',    "{$prefix}/books",                        fn() => $books->index());
-$router->add('POST',   "{$prefix}/books",                        fn() => $books->store());
-$router->add('GET',    "{$prefix}/books/{id:\d+}",               fn($p) => $books->show($p));
-$router->add('PATCH',  "{$prefix}/books/{id:\d+}",               fn($p) => $books->update($p));
-$router->add('DELETE', "{$prefix}/books/{id:\d+}",               fn($p) => $books->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress",      fn($p) => $books->updateProgress($p));
+$router->add('GET',    "{$prefix}/books",                   fn() => $books->index());
+$router->add('POST',   "{$prefix}/books",                   fn() => $books->store());
+$router->add('GET',    "{$prefix}/books/{id:\d+}",          fn($p) => $books->show($p));
+$router->add('PATCH',  "{$prefix}/books/{id:\d+}",          fn($p) => $books->update($p));
+$router->add('DELETE', "{$prefix}/books/{id:\d+}",          fn($p) => $books->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress", fn($p) => $books->updateProgress($p));
 
-// Google Books
+// Unified discovery (NEW)
+$router->add('GET',  "{$prefix}/book-discovery/search", fn() => $bookDiscovery->search());
+$router->add('POST', "{$prefix}/book-discovery/import", fn() => $bookDiscovery->import());
+
+// Legacy source-specific routes kept for compatibility
 $router->add('GET',  "{$prefix}/google-books/search", fn() => $gbooks->search());
 $router->add('POST', "{$prefix}/google-books/import", fn() => $gbooks->import());
 
-// Open Library
 $router->add('GET',  "{$prefix}/open-library/search", fn() => $olib->search());
 $router->add('POST', "{$prefix}/open-library/import", fn() => $olib->import());
 
@@ -227,16 +232,16 @@ $router->add('DELETE', "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quote
 $router->add('PATCH',  "{$prefix}/books/{id}/quotes/{quoteId}", fn($p) => $quotes->update($p));
 
 // Vocab
-$router->add('GET',    "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/vocab",            fn($p) => $vocab->store($p));
-$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}",  fn($p) => $vocab->destroy($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}",  fn($p) => $vocab->update($p));
+$router->add('GET',    "{$prefix}/books/{id}/vocab",           fn($p) => $vocab->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/vocab",           fn($p) => $vocab->store($p));
+$router->add('DELETE', "{$prefix}/books/{id}/vocab/{vocabId}", fn($p) => $vocab->destroy($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/vocab/{vocabId}", fn($p) => $vocab->update($p));
 
 // Chapters
-$router->add('GET',    "{$prefix}/books/{id}/chapters",               fn($p) => $chapters->index($p));
-$router->add('POST',   "{$prefix}/books/{id}/chapters",               fn($p) => $chapters->store($p));
-$router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->update($p));
-$router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}",   fn($p) => $chapters->destroy($p));
+$router->add('GET',    "{$prefix}/books/{id}/chapters",             fn($p) => $chapters->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/chapters",             fn($p) => $chapters->store($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->update($p));
+$router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->destroy($p));
 
 // Quests
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
