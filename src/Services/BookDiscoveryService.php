@@ -518,7 +518,7 @@ final class BookDiscoveryService
         if ($source === 'open_library') $score += 4;
 
         if ($normalizedTitle === $normalizedQuery) {
-            $score += 35;
+        $score += 35;
         } elseif ($normalizedTitle !== '' && str_contains($normalizedTitle, $normalizedQuery)) {
             $score += 22;
         } elseif ($this->tokenOverlapScore($normalizedQuery, $normalizedTitle) >= 0.8) {
@@ -526,6 +526,9 @@ final class BookDiscoveryService
         } elseif ($this->tokenOverlapScore($normalizedQuery, $normalizedTitle) >= 0.5) {
             $score += 8;
         }
+
+        $score += $this->exactTitlePrecisionBonus($query, $title);
+        $score -= $this->titleMismatchPenalty($query, $title);
 
         $expectedAuthor = $this->guessAuthorFromQuery($query);
         if ($expectedAuthor !== null) {
@@ -542,7 +545,7 @@ final class BookDiscoveryService
             if ($this->isFrenchishLanguage($language)) {
                 $score += 18;
             } elseif ($language !== '') {
-                $score -= 8;
+                $score -= 18;
             }
 
             if ($this->looksLikeFrenchPublisher($publisher)) {
@@ -1126,6 +1129,69 @@ final class BookDiscoveryService
         return $matches / max(1, count($qTokens));
     }
 
+    private function exactTitlePrecisionBonus(string $query, string $title): int
+    {
+        $q = $this->normalizeTextForCompare($query);
+        $t = $this->normalizeTextForCompare($title);
+
+        if ($q === '' || $t === '') {
+            return 0;
+        }
+
+        if ($q === $t) {
+            return 55;
+        }
+
+        if (str_starts_with($t, $q . ' ')) {
+            return 30;
+        }
+
+        if (str_ends_with($t, ' ' . $q)) {
+            return 24;
+        }
+
+        similar_text($q, $t, $percent);
+
+        if ($percent >= 95) return 28;
+        if ($percent >= 90) return 18;
+        if ($percent >= 82) return 8;
+
+        return 0;
+    }
+
+    private function titleMismatchPenalty(string $query, string $title): int
+    {
+        $q = $this->normalizeTextForCompare($query);
+        $t = $this->normalizeTextForCompare($title);
+
+        if ($q === '' || $t === '') {
+            return 0;
+        }
+
+        if ($q === $t) {
+            return 0;
+        }
+
+        // Cas métier important : l'étranger ne doit pas remonter l'étrange ...
+        if ($q === 'l etranger' && str_starts_with($t, 'l etrange ')) {
+            return 55;
+        }
+
+        // Si peu de similarité réelle malgré un petit chevauchement
+        similar_text($q, $t, $percent);
+        $overlap = $this->tokenOverlapScore($q, $t);
+
+        if ($overlap >= 0.5 && $percent < 75) {
+            return 22;
+        }
+
+        if ($overlap < 0.5 && $percent < 65) {
+            return 30;
+        }
+
+        return 0;
+    }
+
     private function queryLooksFrench(string $query): bool
     {
         $q = $this->normalizeTextForCompare($query);
@@ -1219,6 +1285,10 @@ final class BookDiscoveryService
             'crafts',
             'study aids',
             'business',
+            'english',
+            'college success',
+            'education',
+            'study guide',
         ];
 
         foreach ($needles as $needle) {
