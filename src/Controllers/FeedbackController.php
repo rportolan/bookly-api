@@ -80,11 +80,67 @@ final class FeedbackController
             'readingMotivation'
         );
 
-        $this->assertArrayOfStrings($favoriteFeatures, 'favoriteFeatures', 0, 12);
-        $this->assertArrayOfStrings($painPoints, 'painPoints', 0, 12);
-        $this->assertArrayOfStrings($desiredFeatures, 'desiredFeatures', 0, 12);
+        $favoriteFeatures = $this->sanitizeArrayOfStrings(
+            $favoriteFeatures,
+            'favoriteFeatures',
+            0,
+            12,
+            [
+                'tracking',
+                'daily_goals',
+                'statistics',
+                'quotes',
+                'vocabulary',
+                'summaries_analysis',
+                'xp_levels',
+                'cards_rewards',
+                'design',
+                'simplicity',
+                'other',
+            ],
+            true
+        );
 
-        $this->assertRequiredChoice(
+        $painPoints = $this->sanitizeArrayOfStrings(
+            $painPoints,
+            'painPoints',
+            0,
+            12,
+            [
+                'design_lacks_polish',
+                'lack_of_clarity',
+                'features_not_useful',
+                'missing_features',
+                'gamification_not_interesting',
+                'lack_of_fluidity',
+                'dont_understand_what_to_do',
+                'not_motivating_enough',
+                'nothing_special',
+                'other',
+            ],
+            true
+        );
+
+        $desiredFeatures = $this->sanitizeArrayOfStrings(
+            $desiredFeatures,
+            'desiredFeatures',
+            0,
+            12,
+            [
+                'more_gamification',
+                'more_statistics',
+                'better_retention',
+                'more_personalization',
+                'reading_recommendations',
+                'more_simplicity',
+                'more_goals_challenges',
+                'more_educational_content',
+                'other',
+            ],
+            true
+        );
+
+        $improvementPriority = $this->sanitizeChoiceWithOptionalOther(
             $improvementPriority,
             [
                 'design_ui',
@@ -188,8 +244,14 @@ final class FeedbackController
         }
     }
 
-    private function assertArrayOfStrings(mixed $value, string $field, int $min = 0, int $max = 10): void
-    {
+    private function sanitizeArrayOfStrings(
+        mixed $value,
+        string $field,
+        int $min = 0,
+        int $max = 10,
+        array $allowed = [],
+        bool $allowOtherPrefix = false
+    ): array {
         if (!is_array($value)) {
             throw new HttpException(
                 422,
@@ -200,6 +262,7 @@ final class FeedbackController
         }
 
         $clean = [];
+
         foreach ($value as $item) {
             if (!is_string($item)) {
                 throw new HttpException(
@@ -211,10 +274,37 @@ final class FeedbackController
             }
 
             $item = trim($item);
-            if ($item === '') continue;
+            if ($item === '') {
+                continue;
+            }
+
+            if ($allowOtherPrefix && $this->isOtherPrefixedValue($item)) {
+                $otherText = $this->extractOtherText($item);
+                if ($otherText === '') {
+                    throw new HttpException(
+                        422,
+                        'VALIDATION_ERROR',
+                        ['field' => $field],
+                        'Invalid other value'
+                    );
+                }
+                $clean[] = 'other:' . $otherText;
+                continue;
+            }
+
+            if (!empty($allowed) && !in_array($item, $allowed, true)) {
+                throw new HttpException(
+                    422,
+                    'VALIDATION_ERROR',
+                    ['field' => $field, 'allowed' => $allowed],
+                    'Invalid array value'
+                );
+            }
 
             $clean[] = $item;
         }
+
+        $clean = array_values(array_unique($clean));
 
         if (count($clean) < $min || count($clean) > $max) {
             throw new HttpException(
@@ -224,6 +314,74 @@ final class FeedbackController
                 'Invalid array size'
             );
         }
+
+        return $clean;
+    }
+
+    private function sanitizeChoiceWithOptionalOther(
+        string $value,
+        array $allowed,
+        string $field
+    ): string {
+        $value = trim($value);
+
+        if ($value === '') {
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => $field, 'allowed' => $allowed],
+                'Invalid choice'
+            );
+        }
+
+        if ($this->isOtherPrefixedValue($value)) {
+            $otherText = $this->extractOtherText($value);
+            if ($otherText === '') {
+                throw new HttpException(
+                    422,
+                    'VALIDATION_ERROR',
+                    ['field' => $field],
+                    'Invalid other value'
+                );
+            }
+            return 'other:' . $otherText;
+        }
+
+        if (!in_array($value, $allowed, true)) {
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => $field, 'allowed' => $allowed],
+                'Invalid choice'
+            );
+        }
+
+        return $value;
+    }
+
+    private function isOtherPrefixedValue(string $value): bool
+    {
+        return str_starts_with($value, 'other:');
+    }
+
+    private function extractOtherText(string $value): string
+    {
+        $text = trim(substr($value, 6));
+
+        if ($text === '') {
+            return '';
+        }
+
+        if (mb_strlen($text) > 255) {
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'other'],
+                'Other value is too long'
+            );
+        }
+
+        return $text;
     }
 
     private function mapRow(array $r): array
