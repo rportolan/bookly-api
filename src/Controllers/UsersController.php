@@ -31,20 +31,17 @@ final class UsersController
         $uid = Auth::requireAuth();
         $body = Request::json();
 
-        // Champs profil
         $firstName = array_key_exists('firstName', $body) ? trim((string)$body['firstName']) : null;
         $lastName  = array_key_exists('lastName',  $body) ? trim((string)$body['lastName'])  : null;
         $username  = array_key_exists('username',  $body) ? trim((string)$body['username'])  : null;
         $bio       = array_key_exists('bio',       $body) ? trim((string)$body['bio'])       : null;
 
-        // Prefs imbriqués
         $prefs = is_array($body['preferences'] ?? null) ? $body['preferences'] : [];
 
         $goalPagesPerDay = array_key_exists('goalPagesPerDay', $prefs) ? (int)$prefs['goalPagesPerDay'] : null;
         $language        = array_key_exists('language', $prefs) ? (string)$prefs['language'] : null;
         $density         = array_key_exists('density', $prefs) ? (string)$prefs['density'] : null;
 
-        // Validation MVP
         if ($username !== null) {
             if ($username === '') {
                 throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'username'], 'Username requis');
@@ -74,7 +71,6 @@ final class UsersController
 
         $repo = new UserRepository();
 
-        // Username unique (check applicatif)
         if ($username !== null) {
             $existing = $repo->findByUsername($username);
             if ($existing && (int)$existing['id'] !== (int)$uid) {
@@ -82,7 +78,6 @@ final class UsersController
             }
         }
 
-        // Update
         try {
             $repo->updateById($uid, [
                 'first_name' => $firstName,
@@ -94,7 +89,6 @@ final class UsersController
                 'density'    => $density,
             ]);
         } catch (\PDOException $e) {
-            // garde-fou UNIQUE uq_users_username / uq_users_email
             if ((int)($e->errorInfo[1] ?? 0) === 1062) {
                 throw new HttpException(409, 'CONFLICT', ['reason' => 'duplicate'], 'Conflit de données (déjà utilisé)');
             }
@@ -110,19 +104,34 @@ final class UsersController
         $uid = Auth::requireAuth();
         $body = Request::json();
 
-        $current = (string)($body['currentPassword'] ?? '');
+        $current = trim((string)($body['currentPassword'] ?? ''));
         $new     = (string)($body['newPassword'] ?? '');
 
         if ($current === '' || $new === '') {
-            throw new HttpException(422, 'VALIDATION_ERROR', ['fields' => ['currentPassword', 'newPassword']], 'Champs requis: currentPassword, newPassword');
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['fields' => ['currentPassword', 'newPassword']],
+                'Champs requis: currentPassword, newPassword'
+            );
         }
 
         if (strlen($new) < 8) {
-            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'newPassword', 'min' => 8], 'Mot de passe trop court (min 8)');
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'newPassword', 'min' => 8],
+                'Le nouveau mot de passe doit contenir au moins 8 caractères'
+            );
         }
 
         if ($current === $new) {
-            throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'newPassword'], 'Le nouveau mot de passe doit être différent');
+            throw new HttpException(
+                422,
+                'VALIDATION_ERROR',
+                ['field' => 'newPassword'],
+                'Le nouveau mot de passe doit être différent du mot de passe actuel'
+            );
         }
 
         $repo = new UserRepository();
@@ -132,20 +141,26 @@ final class UsersController
         }
 
         if (!password_verify($current, (string)$user['password_hash'])) {
-            throw new HttpException(401, 'UNAUTHORIZED', ['field' => 'currentPassword'], 'Mot de passe actuel incorrect');
+            throw new HttpException(
+                422,
+                'CURRENT_PASSWORD_INCORRECT',
+                ['field' => 'currentPassword'],
+                'Mot de passe actuel incorrect'
+            );
         }
 
         $hash = password_hash($new, PASSWORD_DEFAULT);
         $repo->updatePasswordHash($uid, $hash);
 
-        // Recommandé: révoquer tous les refresh tokens (force logout sur tous devices)
-        try {
-            $rt = new RefreshTokenRepository();
-            $rt->revokeAllForUser($uid);
-        } catch (\Throwable $e) {
-            // MVP: on log seulement
-            error_log('[BOOKLY] revokeAllForUser failed: ' . $e->getMessage());
-        }
+        /**
+         * NOTE:
+         * On ne révoque pas les refresh tokens ici pour éviter
+         * une déconnexion involontaire de la session courante.
+         *
+         * Si plus tard tu veux une politique plus stricte,
+         * le mieux sera de révoquer "les autres sessions"
+         * tout en conservant la session courante.
+         */
 
         Response::ok(['changed' => true]);
     }
@@ -154,7 +169,6 @@ final class UsersController
     {
         $uid = Auth::requireAuth();
 
-        // recommandé: révoquer refresh tokens avant suppression
         try {
             $rt = new RefreshTokenRepository();
             $rt->revokeAllForUser($uid);
