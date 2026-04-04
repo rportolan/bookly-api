@@ -28,13 +28,15 @@ final class AuthController
     {
         $body = Request::json();
 
+        $firstName = trim((string)($body['firstName'] ?? ''));
+        $lastName = trim((string)($body['lastName'] ?? ''));
         $email = trim((string)($body['email'] ?? ''));
         $username = trim((string)($body['username'] ?? ''));
         $password = (string)($body['password'] ?? '');
 
-        if ($email === '' || $username === '' || $password === '') {
+        if ($firstName === '' || $lastName === '' || $email === '' || $username === '' || $password === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', [
-                'required' => ['email', 'username', 'password'],
+                'required' => ['firstName', 'lastName', 'email', 'username', 'password'],
             ], 'Missing required fields');
         }
 
@@ -42,6 +44,33 @@ final class AuthController
             throw new HttpException(422, 'VALIDATION_ERROR', [
                 'field' => 'email',
             ], 'Invalid email');
+        }
+
+        $firstNameLen = mb_strlen($firstName);
+        if ($firstNameLen < 2 || $firstNameLen > 60) {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'field' => 'firstName',
+                'min' => 2,
+                'max' => 60,
+            ], 'Invalid first name');
+        }
+
+        $lastNameLen = mb_strlen($lastName);
+        if ($lastNameLen < 2 || $lastNameLen > 60) {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'field' => 'lastName',
+                'min' => 2,
+                'max' => 60,
+            ], 'Invalid last name');
+        }
+
+        $usernameLen = mb_strlen($username);
+        if ($usernameLen < 3 || $usernameLen > 60) {
+            throw new HttpException(422, 'VALIDATION_ERROR', [
+                'field' => 'username',
+                'min' => 3,
+                'max' => 60,
+            ], 'Invalid username');
         }
 
         if (strlen($password) < 8) {
@@ -65,6 +94,8 @@ final class AuthController
         $hash = password_hash($password, $algo);
 
         $userId = $repo->create([
+            'first_name' => $firstName,
+            'last_name' => $lastName,
             'email' => $email,
             'username' => $username,
             'password_hash' => $hash,
