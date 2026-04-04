@@ -104,8 +104,9 @@ final class UsersController
         $uid = Auth::requireAuth();
         $body = Request::json();
 
-        $current = trim((string)($body['currentPassword'] ?? ''));
-        $new     = (string)($body['newPassword'] ?? '');
+        $current            = trim((string)($body['currentPassword'] ?? ''));
+        $new                = (string)($body['newPassword'] ?? '');
+        $currentRefreshToken = trim((string)($body['currentRefreshToken'] ?? ''));
 
         if ($current === '' || $new === '') {
             throw new HttpException(
@@ -152,15 +153,20 @@ final class UsersController
         $hash = password_hash($new, PASSWORD_DEFAULT);
         $repo->updatePasswordHash($uid, $hash);
 
-        /**
-         * NOTE:
-         * On ne révoque pas les refresh tokens ici pour éviter
-         * une déconnexion involontaire de la session courante.
-         *
-         * Si plus tard tu veux une politique plus stricte,
-         * le mieux sera de révoquer "les autres sessions"
-         * tout en conservant la session courante.
-         */
+        // Révoquer toutes les autres sessions actives.
+        // Si le frontend passe son refresh token courant, on le conserve pour
+        // éviter de déconnecter l'appareil depuis lequel le changement est fait.
+        // Sinon, on révoque tout (comportement le plus sécurisé).
+        try {
+            $rt = new RefreshTokenRepository();
+            if ($currentRefreshToken !== '') {
+                $rt->revokeAllExcept($uid, $currentRefreshToken);
+            } else {
+                $rt->revokeAllForUser($uid);
+            }
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY] revokeAllExcept failed after changePassword: ' . $e->getMessage());
+        }
 
         Response::ok(['changed' => true]);
     }

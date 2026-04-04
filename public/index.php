@@ -166,17 +166,34 @@ $feedback      = new FeedbackController();
  */
 $prefix = '/v1';
 
+// -------------------------------------------------------------------------
+// Convention de nommage des clés de rate limit : {domaine}:{action}:{IP}
+//
+// auth:register   — 5   / heure    (création de compte)
+// auth:login      — 10  / 5 min    (brute-force protection)
+// auth:resend     — 3   / heure    (email de vérification)
+// auth:forgot     — 5   / heure    (email de reset)
+// auth:reset      — 10  / 15 min   (soumission du token reset)
+// book:search     — 30  / min      (API externe, cache en place)
+// book:import     — 10  / min      (API externe + écriture DB)
+// learn:session   — 20  / min      (XP award, idempotent mais coûteux)
+// quiz:attempt    — 20  / min      (XP award, idempotent par quizId)
+// card:claim      — 30  / min      (lecture DB légère)
+// feedback:submit — 3   / heure    (écriture unique par user)
+// global          — 200 / min      (filet de sécurité toutes routes)
+// -------------------------------------------------------------------------
+
 // Health
 $router->add('GET', "{$prefix}/health", $health);
 
 // Auth
 $router->add('POST', "{$prefix}/auth/register", function () use ($auth) {
-    RateLimiter::check('register:' . RateLimiter::ip(), 5, 3600);
+    RateLimiter::check('auth:register:' . RateLimiter::ip(), 5, 3600);
     $auth->register();
 });
 
 $router->add('POST', "{$prefix}/auth/login", function () use ($auth) {
-    RateLimiter::check('login:' . RateLimiter::ip(), 10, 300);
+    RateLimiter::check('auth:login:' . RateLimiter::ip(), 10, 300);
     $auth->login();
 });
 
@@ -188,16 +205,19 @@ $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 // Email verification
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
 $router->add('POST', "{$prefix}/auth/resend-verification", function () use ($auth) {
-    RateLimiter::check('resend:' . RateLimiter::ip(), 3, 3600);
+    RateLimiter::check('auth:resend:' . RateLimiter::ip(), 3, 3600);
     $auth->resendVerification();
 });
 
 // Password reset
 $router->add('POST', "{$prefix}/auth/forgot-password", function () use ($auth) {
-    RateLimiter::check('forgot:' . RateLimiter::ip(), 5, 3600);
+    RateLimiter::check('auth:forgot:' . RateLimiter::ip(), 5, 3600);
     $auth->forgotPassword();
 });
-$router->add('POST', "{$prefix}/auth/reset-password", fn() => $auth->resetPassword());
+$router->add('POST', "{$prefix}/auth/reset-password", function () use ($auth) {
+    RateLimiter::check('auth:reset:' . RateLimiter::ip(), 10, 900);
+    $auth->resetPassword();
+});
 $router->add('GET',  "{$prefix}/auth/reset-password", fn() => $auth->resetPasswordHtml());
 
 // Dashboard
@@ -216,16 +236,35 @@ $router->add('PATCH',  "{$prefix}/books/{id:\d+}",          fn($p) => $books->up
 $router->add('DELETE', "{$prefix}/books/{id:\d+}",          fn($p) => $books->destroy($p));
 $router->add('PATCH',  "{$prefix}/books/{id:\d+}/progress", fn($p) => $books->updateProgress($p));
 
-// Unified discovery (NEW)
-$router->add('GET',  "{$prefix}/book-discovery/search", fn() => $bookDiscovery->search());
-$router->add('POST', "{$prefix}/book-discovery/import", fn() => $bookDiscovery->import());
+// Unified discovery
+$router->add('GET', "{$prefix}/book-discovery/search", function () use ($bookDiscovery) {
+    RateLimiter::check('book:search:' . RateLimiter::ip(), 30, 60);
+    $bookDiscovery->search();
+});
+$router->add('POST', "{$prefix}/book-discovery/import", function () use ($bookDiscovery) {
+    RateLimiter::check('book:import:' . RateLimiter::ip(), 10, 60);
+    $bookDiscovery->import();
+});
 
 // Legacy source-specific routes kept for compatibility
-$router->add('GET',  "{$prefix}/google-books/search", fn() => $gbooks->search());
-$router->add('POST', "{$prefix}/google-books/import", fn() => $gbooks->import());
+// Clé partagée book:search et book:import : les 3 endpoints consomment le même compteur.
+$router->add('GET', "{$prefix}/google-books/search", function () use ($gbooks) {
+    RateLimiter::check('book:search:' . RateLimiter::ip(), 30, 60);
+    $gbooks->search();
+});
+$router->add('POST', "{$prefix}/google-books/import", function () use ($gbooks) {
+    RateLimiter::check('book:import:' . RateLimiter::ip(), 10, 60);
+    $gbooks->import();
+});
 
-$router->add('GET',  "{$prefix}/open-library/search", fn() => $olib->search());
-$router->add('POST', "{$prefix}/open-library/import", fn() => $olib->import());
+$router->add('GET', "{$prefix}/open-library/search", function () use ($olib) {
+    RateLimiter::check('book:search:' . RateLimiter::ip(), 30, 60);
+    $olib->search();
+});
+$router->add('POST', "{$prefix}/open-library/import", function () use ($olib) {
+    RateLimiter::check('book:import:' . RateLimiter::ip(), 10, 60);
+    $olib->import();
+});
 
 // Quotes
 $router->add('GET',    "{$prefix}/books/{id}/quotes",           fn($p) => $quotes->index($p));
@@ -249,8 +288,11 @@ $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $c
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
 
 // Cards
-$router->add('GET',  "{$prefix}/cards",                fn() => $cards->index());
-$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", fn($p) => $cards->claim($p));
+$router->add('GET',  "{$prefix}/cards", fn() => $cards->index());
+$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", function () use ($cards) {
+    RateLimiter::check('card:claim:' . RateLimiter::ip(), 30, 60);
+    $cards->claim(func_get_arg(0));
+});
 
 // Reading
 $router->add('GET',   "{$prefix}/reading/goal",      fn() => $reading->getGoal());
@@ -259,23 +301,32 @@ $router->add('GET',   "{$prefix}/reading/log",       fn() => $reading->getLog())
 $router->add('PATCH', "{$prefix}/reading/log/today", fn() => $reading->upsertToday());
 
 // Learn
-$router->add('GET',  "{$prefix}/learn/books",            fn() => $learn->books());
-$router->add('GET',  "{$prefix}/learn/deck",             fn() => $learn->deck());
-$router->add('POST', "{$prefix}/learn/session/complete", fn() => $learn->completeSession());
+$router->add('GET',  "{$prefix}/learn/books", fn() => $learn->books());
+$router->add('GET',  "{$prefix}/learn/deck",  fn() => $learn->deck());
+$router->add('POST', "{$prefix}/learn/session/complete", function () use ($learn) {
+    RateLimiter::check('learn:session:' . RateLimiter::ip(), 20, 60);
+    $learn->completeSession();
+});
 
 // Quiz
 $router->add('GET',  "{$prefix}/quiz/categories",               fn() => $quiz->categories());
 $router->add('GET',  "{$prefix}/quiz/packs",                    fn() => $quiz->packs());
 $router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}",           fn($p) => $quiz->packShow($p));
 $router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}",         fn($p) => $quiz->quizShow($p));
-$router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", fn($p) => $quiz->submit($p));
+$router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", function () use ($quiz) {
+    RateLimiter::check('quiz:attempt:' . RateLimiter::ip(), 20, 60);
+    $quiz->submit(func_get_arg(0));
+});
 
 // Dictionary
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
 
 // Feedback
 $router->add('GET',  "{$prefix}/feedback/me", fn() => $feedback->me());
-$router->add('POST', "{$prefix}/feedback",    fn() => $feedback->submit());
+$router->add('POST', "{$prefix}/feedback", function () use ($feedback) {
+    RateLimiter::check('feedback:submit:' . RateLimiter::ip(), 3, 3600);
+    $feedback->submit();
+});
 
 /**
  * Dispatch
@@ -291,5 +342,9 @@ if ($uri !== '/' && str_ends_with($uri, '/')) {
 if (str_starts_with($uri, '/api/')) {
     $uri = '/v1' . substr($uri, 4);
 }
+
+// Rate limit global : 200 requêtes/minute par IP, toutes routes confondues.
+// Filet de sécurité — bloque tout script avant même d'atteindre une route.
+RateLimiter::check('global:' . RateLimiter::ip(), 200, 60);
 
 $router->dispatch($method, $uri);

@@ -8,6 +8,7 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Repositories\LearnRepository;
+use App\Repositories\ProgressRepository;
 use App\Services\ProgressService;
 
 final class LearnController
@@ -90,19 +91,33 @@ final class LearnController
         $after = $before;
 
         if ($xp > 0) {
-            try {
-                $after = $ps->award($uid, 'LEARN_SESSION_DONE', $xp, [
-                    'sessionId'  => $sessionId,
-                    'userBookId' => $userBookId,
-                    'mode'       => $mode,
-                    'total'      => $total,
-                    'known'      => $known,
-                    'again'      => $again,
-                ]);
-            } catch (\Throwable $e) {
-                error_log('[BOOKLY][XP] award LEARN_SESSION_DONE failed: ' . $e->getMessage());
+            // Si un sessionId est fourni, on vérifie qu'il n'a pas déjà été récompensé.
+            $alreadyRewarded = false;
+            if ($sessionId !== '') {
+                $pr = new ProgressRepository();
+                $alreadyRewarded = $pr->hasEventMeta($uid, 'LEARN_SESSION_DONE', 'sessionId', $sessionId);
+            }
+
+            if ($alreadyRewarded) {
                 $after = $ps->snapshot($uid);
                 $after['cardUnlock'] = $this->emptyCardUnlock();
+                $xp = 0;
+            } else {
+                try {
+                    $after = $ps->award($uid, 'LEARN_SESSION_DONE', $xp, [
+                        'sessionId'  => $sessionId,
+                        'userBookId' => $userBookId,
+                        'mode'       => $mode,
+                        'total'      => $total,
+                        'known'      => $known,
+                        'again'      => $again,
+                    ]);
+                } catch (\Throwable $e) {
+                    error_log('[BOOKLY][XP] award LEARN_SESSION_DONE failed: ' . $e->getMessage());
+                    $after = $ps->snapshot($uid);
+                    $after['cardUnlock'] = $this->emptyCardUnlock();
+                    $xp = 0;
+                }
             }
         } else {
             $after['cardUnlock'] = $this->emptyCardUnlock();
