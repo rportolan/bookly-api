@@ -56,6 +56,7 @@ final class AuthController
         if ($repo->findByEmail($email)) {
             throw new HttpException(409, 'CONFLICT', ['field' => 'email'], 'Email already used');
         }
+
         if ($repo->findByUsername($username)) {
             throw new HttpException(409, 'CONFLICT', ['field' => 'username'], 'Username already used');
         }
@@ -75,7 +76,6 @@ final class AuthController
             throw new HttpException(500, 'SERVER_ERROR', [], 'User not found after register');
         }
 
-        // send verification email
         $this->sendVerificationEmail((int)$userId, $email);
 
         Response::created([
@@ -102,7 +102,6 @@ final class AuthController
 
         $repo = new UserRepository();
 
-        // ✅ allow username OR email
         $user = str_contains($identifier, '@')
             ? $repo->findByEmail($identifier)
             : $repo->findByUsername($identifier);
@@ -149,12 +148,26 @@ final class AuthController
         $token = trim((string)($_GET['token'] ?? ''));
 
         if ($email === '' || $token === '') {
-            $this->renderSimpleHtml("Lien invalide.", false, "Readout - Vérification");
+            $this->renderSimpleHtml(
+                'Lien invalide.',
+                false,
+                'Readout - Vérification',
+                'Vérification email',
+                'Lien invalide',
+                'Ce lien de confirmation est incomplet ou incorrect.'
+            );
             return;
         }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $this->renderSimpleHtml("Adresse email invalide.", false, "Readout - Vérification");
+            $this->renderSimpleHtml(
+                'Adresse email invalide.',
+                false,
+                'Readout - Vérification',
+                'Vérification email',
+                'Adresse invalide',
+                'Cette adresse email ne semble pas valide.'
+            );
             return;
         }
 
@@ -164,18 +177,39 @@ final class AuthController
         $row = $verifyRepo->findValidByEmailAndTokenHash($email, $tokenHash);
 
         if (!$row) {
-            $this->renderSimpleHtml("Lien invalide ou expiré.", false, "Readout - Vérification");
+            $this->renderSimpleHtml(
+                'Lien invalide ou expiré.',
+                false,
+                'Readout - Vérification',
+                'Vérification email',
+                'Lien indisponible',
+                'Ce lien de vérification est invalide ou a expiré.'
+            );
             return;
         }
 
         if (!empty($row['used_at'])) {
-            $this->renderSimpleHtml("Ton email est déjà vérifié.", true, "Readout - Vérification");
+            $this->renderSimpleHtml(
+                'Ton email est déjà vérifié.',
+                true,
+                'Readout - Vérification',
+                'Vérification email',
+                'Email déjà confirmé',
+                'Ton adresse email est déjà confirmée. Tu peux retourner dans l’application.'
+            );
             return;
         }
 
         $expiresAt = strtotime((string)$row['expires_at']);
         if ($expiresAt <= 0 || $expiresAt < time()) {
-            $this->renderSimpleHtml("Lien expiré.", false, "Readout - Vérification");
+            $this->renderSimpleHtml(
+                'Lien expiré.',
+                false,
+                'Readout - Vérification',
+                'Vérification email',
+                'Lien expiré',
+                'Ce lien de confirmation a expiré. Demande un nouvel email depuis l’application.'
+            );
             return;
         }
 
@@ -185,7 +219,14 @@ final class AuthController
         $userRepo->markEmailVerified($userId);
         $verifyRepo->markUsed($userId);
 
-        $this->renderSimpleHtml("Email vérifié avec succès ! 🎉", true, "Readout - Vérification");
+        $this->renderSimpleHtml(
+            'Email vérifié avec succès.',
+            true,
+            'Readout - Vérification',
+            'Vérification email',
+            'Email confirmé',
+            'Ton compte est maintenant activé. Tu peux retourner dans Readout et te connecter.'
+        );
     }
 
     /**
@@ -243,7 +284,6 @@ final class AuthController
         $body = Request::json();
         $email = trim((string)($body['email'] ?? ''));
 
-        // anti-enumération
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             Response::ok(['sent' => true]);
             return;
@@ -284,11 +324,23 @@ final class AuthController
         header('Content-Type: text/html; charset=utf-8');
 
         if ($email === '' || $token === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            echo $this->resetHtmlPage("Lien invalide.", false, false, $email, $token);
+            echo $this->resetHtmlPage(
+                'Lien invalide.',
+                false,
+                false,
+                $email,
+                $token
+            );
             return;
         }
 
-        echo $this->resetHtmlPage("Choisis un nouveau mot de passe.", true, true, $email, $token);
+        echo $this->resetHtmlPage(
+            'Choisis un nouveau mot de passe pour sécuriser ton compte.',
+            true,
+            true,
+            $email,
+            $token
+        );
     }
 
     /**
@@ -314,7 +366,6 @@ final class AuthController
             return;
         }
 
-        // HTML form submit
         $email = trim((string)($_POST['email'] ?? ''));
         $token = trim((string)($_POST['token'] ?? ''));
         $newPassword = (string)($_POST['new_password'] ?? '');
@@ -323,19 +374,33 @@ final class AuthController
 
         try {
             $this->resetPasswordCore($email, $token, $newPassword);
-            echo $this->resetHtmlPage("Mot de passe mis à jour ✅ Tu peux te reconnecter.", true, false, $email, $token);
+
+            echo $this->resetHtmlPage(
+                'Mot de passe mis à jour.',
+                true,
+                false,
+                $email,
+                $token
+            );
             return;
         } catch (\Throwable $e) {
-            $msg = "Lien invalide ou expiré.";
+            $msg = 'Lien invalide ou expiré.';
             if ($e instanceof HttpException) {
                 $msg = match ($e->errorCode) {
-                    'RESET_EXPIRED' => "Lien expiré.",
-                    'RESET_ALREADY_USED' => "Lien déjà utilisé.",
-                    'VALIDATION_ERROR' => "Mot de passe invalide (min 8).",
-                    default => "Lien invalide ou expiré.",
+                    'RESET_EXPIRED' => 'Lien expiré.',
+                    'RESET_ALREADY_USED' => 'Lien déjà utilisé.',
+                    'VALIDATION_ERROR' => 'Mot de passe invalide (minimum 8 caractères).',
+                    default => 'Lien invalide ou expiré.',
                 };
             }
-            echo $this->resetHtmlPage($msg, false, true, $email, $token);
+
+            echo $this->resetHtmlPage(
+                $msg,
+                false,
+                true,
+                $email,
+                $token
+            );
             return;
         }
     }
@@ -398,50 +463,54 @@ final class AuthController
         string $email = '',
         string $token = ''
     ): string {
-        $color = $ok ? "#16a34a" : "#dc2626";
         $safeEmail = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
         $safeToken = htmlspecialchars($token, ENT_QUOTES, 'UTF-8');
 
-        $form = $showForm ? "
-          <form method='POST' action='/v1/auth/reset-password' style='margin-top:18px;display:flex;flex-direction:column;gap:10px;'>
-            <input type='hidden' name='email' value='{$safeEmail}' />
-            <input type='hidden' name='token' value='{$safeToken}' />
+        $content = '';
 
-            <input type='password' name='new_password' placeholder='Nouveau mot de passe (min 8)'
-              style='padding:12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:#fff' />
+        if ($showForm) {
+            $content = "
+                <form method='POST' action='/v1/auth/reset-password' class='auth-form'>
+                    <input type='hidden' name='email' value='{$safeEmail}' />
+                    <input type='hidden' name='token' value='{$safeToken}' />
 
-            <button type='submit'
-              style='padding:12px;border-radius:12px;border:1px solid #374151;background:#111827;color:#fff;font-weight:800'>
-              Mettre à jour
-            </button>
+                    <label class='field-label' for='new_password'>Nouveau mot de passe</label>
+                    <input
+                        id='new_password'
+                        type='password'
+                        name='new_password'
+                        placeholder='Minimum 8 caractères'
+                        class='auth-input'
+                        autocomplete='new-password'
+                        required
+                        minlength='8'
+                    />
 
-            <p style='margin-top:10px;color:#9ca3af;font-size:12px'>
-              Email: {$safeEmail}
-            </p>
-          </form>
-        " : "
-          <p style='margin-top:16px;color:#9ca3af;'>Retourne dans l'app et connecte-toi.</p>
-        ";
+                    <button type='submit' class='primary-button'>
+                        Mettre à jour le mot de passe
+                    </button>
 
-        return "
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset='UTF-8'>
-          <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-          <title>Readout - Réinitialisation du mot de passe</title>
-        </head>
-        <body style='margin:0;font-family:Arial;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;'>
-          <div style='text-align:center;padding:24px;max-width:420px;'>
-            <h1 style='color:$color;'>$message</h1>
-            $form
-            <p style='margin-top:18px;font-size:12px;color:#6b7280;'>
-              Si tu n'es pas à l'origine de cette demande, tu peux ignorer cette page.
-            </p>
-          </div>
-        </body>
-        </html>
-        ";
+                    <p class='meta-text'>Compte concerné : {$safeEmail}</p>
+                </form>
+            ";
+        } else {
+            $content = "
+                <div class='stack'>
+                    <p class='body-muted'>Retourne dans l’application et reconnecte-toi avec ton nouveau mot de passe.</p>
+                </div>
+            ";
+        }
+
+        return $this->renderAuthPage([
+            'title' => 'Readout - Réinitialisation du mot de passe',
+            'status' => $ok ? 'success' : 'error',
+            'eyebrow' => 'Sécurité du compte',
+            'heading' => $ok ? 'Mot de passe mis à jour' : 'Réinitialisation du mot de passe',
+            'message' => $message,
+            'content' => $content,
+            'footer' => "Si tu n'es pas à l'origine de cette demande, tu peux ignorer cette page.",
+            'showAppHint' => !$showForm,
+        ]);
     }
 
     /* ============================================================
@@ -540,39 +609,16 @@ final class AuthController
         $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
         $verifyUrl = $appUrl . "/v1/auth/verify-email?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
 
-        $subject = "Confirme ton adresse email - Readout";
-        $html = "
-            <div style=\"font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;color:#111827\">
+        $subject = 'Confirme ton adresse email - Readout';
 
-              <h2 style=\"margin-top:0;font-size:22px;font-weight:900;color:#111827\">Confirme ton adresse email</h2>
-
-              <p style=\"font-size:15px;line-height:1.6;color:#374151\">
-                Bienvenue sur <strong>Readout</strong> 👋<br>
-                Clique sur le bouton ci-dessous pour confirmer ton adresse email et activer ton compte.
-              </p>
-
-              <p style=\"margin:28px 0;\">
-                <a href=\"{$verifyUrl}\"
-                   style=\"display:inline-block;padding:14px 24px;text-decoration:none;border-radius:10px;background:#111827;color:#ffffff;font-weight:800;font-size:15px\">
-                  Confirmer mon email
-                </a>
-              </p>
-
-              <p style=\"font-size:13px;color:#6b7280;line-height:1.6\">
-                Si le bouton ne fonctionne pas, copie et colle ce lien dans ton navigateur :<br>
-                <span style=\"color:#4b5563\">{$verifyUrl}</span>
-              </p>
-
-              <hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0\">
-
-              <p style=\"font-size:12px;color:#9ca3af;line-height:1.6\">
-                Ce lien est valable <strong>1 heure</strong>.<br>
-                Si tu n'es pas à l'origine de cette inscription, ignore simplement cet email.<br><br>
-                📬 <em>Cet email t'a été envoyé automatiquement. Si tu ne le trouves pas, vérifie ton dossier <strong>spam ou courrier indésirable</strong>.</em>
-              </p>
-
-            </div>
-        ";
+        $html = $this->buildEmailLayout([
+            'eyebrow' => 'Bienvenue sur Readout',
+            'title' => 'Confirme ton adresse email',
+            'intro' => "Ton compte est presque prêt. Confirme ton adresse email pour activer Readout et commencer à suivre tes lectures.",
+            'buttonLabel' => 'Confirmer mon email',
+            'buttonUrl' => $verifyUrl,
+            'note' => "Ce lien est valable 1 heure. Si tu n'es pas à l'origine de cette inscription, tu peux simplement ignorer cet email.",
+        ]);
 
         Mailer::send($email, $subject, $html);
     }
@@ -590,72 +636,374 @@ final class AuthController
         $appUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
         $resetUrl = $appUrl . "/v1/auth/reset-password?email=" . urlencode($email) . "&token=" . urlencode($rawToken);
 
-        $subject = "Réinitialise ton mot de passe - Readout";
-        $html = "
-            <div style=\"font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;color:#111827\">
+        $subject = 'Réinitialise ton mot de passe - Readout';
 
-              <h2 style=\"margin-top:0;font-size:22px;font-weight:900;color:#111827\">Réinitialisation du mot de passe</h2>
-
-              <p style=\"font-size:15px;line-height:1.6;color:#374151\">
-                Tu as demandé à réinitialiser le mot de passe de ton compte <strong>Readout</strong>.<br>
-                Clique sur le bouton ci-dessous pour choisir un nouveau mot de passe.
-              </p>
-
-              <p style=\"margin:28px 0;\">
-                <a href=\"{$resetUrl}\"
-                   style=\"display:inline-block;padding:14px 24px;text-decoration:none;border-radius:10px;background:#111827;color:#ffffff;font-weight:800;font-size:15px\">
-                  Réinitialiser mon mot de passe
-                </a>
-              </p>
-
-              <p style=\"font-size:13px;color:#6b7280;line-height:1.6\">
-                Si le bouton ne fonctionne pas, copie et colle ce lien dans ton navigateur :<br>
-                <span style=\"color:#4b5563\">{$resetUrl}</span>
-              </p>
-
-              <hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0\">
-
-              <p style=\"font-size:12px;color:#9ca3af;line-height:1.6\">
-                Ce lien est valable <strong>1 heure</strong>.<br>
-                Si tu n'es pas à l'origine de cette demande, ignore cet email — ton mot de passe ne sera pas modifié.<br><br>
-                📬 <em>Cet email t'a été envoyé automatiquement. Si tu ne le trouves pas, vérifie ton dossier <strong>spam ou courrier indésirable</strong>.</em>
-              </p>
-
-            </div>
-        ";
+        $html = $this->buildEmailLayout([
+            'eyebrow' => 'Sécurité du compte',
+            'title' => 'Réinitialise ton mot de passe',
+            'intro' => "Tu as demandé à réinitialiser le mot de passe de ton compte Readout. Clique sur le bouton ci-dessous pour en choisir un nouveau.",
+            'buttonLabel' => 'Réinitialiser mon mot de passe',
+            'buttonUrl' => $resetUrl,
+            'note' => "Ce lien est valable 1 heure. Si tu n'es pas à l'origine de cette demande, ignore cet email : ton mot de passe ne sera pas modifié.",
+        ]);
 
         Mailer::send($email, $subject, $html);
+    }
+
+    private function buildEmailLayout(array $data): string
+    {
+        $eyebrow = htmlspecialchars((string)($data['eyebrow'] ?? 'Readout'), ENT_QUOTES, 'UTF-8');
+        $title = htmlspecialchars((string)($data['title'] ?? 'Notification'), ENT_QUOTES, 'UTF-8');
+        $intro = htmlspecialchars((string)($data['intro'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $buttonLabel = htmlspecialchars((string)($data['buttonLabel'] ?? 'Ouvrir'), ENT_QUOTES, 'UTF-8');
+        $buttonUrl = htmlspecialchars((string)($data['buttonUrl'] ?? '#'), ENT_QUOTES, 'UTF-8');
+        $note = htmlspecialchars((string)($data['note'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        return "
+        <div style=\"margin:0;padding:32px 16px;background:#f8fafc;\">
+            <div style=\"max-width:560px;margin:0 auto;font-family:Inter,Arial,sans-serif;color:#0f172a;\">
+                <div style=\"text-align:center;margin-bottom:18px;\">
+                    <div style=\"display:inline-block;padding:8px 14px;border-radius:999px;background:#ede9fe;color:#6d28d9;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;\">
+                        {$eyebrow}
+                    </div>
+                </div>
+
+                <div style=\"background:#ffffff;border:1px solid #e2e8f0;border-radius:24px;padding:36px 32px;box-shadow:0 18px 40px rgba(15,23,42,.08);\">
+                    <h1 style=\"margin:0 0 12px;font-size:28px;line-height:1.15;letter-spacing:-0.03em;color:#0f172a;\">
+                        {$title}
+                    </h1>
+
+                    <p style=\"margin:0 0 28px;font-size:15px;line-height:1.7;color:#475569;\">
+                        {$intro}
+                    </p>
+
+                    <div style=\"margin:0 0 28px;\">
+                        <a href=\"{$buttonUrl}\"
+                           style=\"display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(180deg,#8b5cf6 0%,#7c3aed 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;\">
+                            {$buttonLabel}
+                        </a>
+                    </div>
+
+                    <div style=\"padding:16px 18px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;\">
+                        <p style=\"margin:0 0 8px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;\">
+                            Lien direct
+                        </p>
+                        <p style=\"margin:0;font-size:13px;line-height:1.7;word-break:break-all;color:#475569;\">
+                            {$buttonUrl}
+                        </p>
+                    </div>
+
+                    <hr style=\"border:none;border-top:1px solid #e2e8f0;margin:28px 0;\">
+
+                    <p style=\"margin:0;font-size:13px;line-height:1.7;color:#64748b;\">
+                        {$note}
+                    </p>
+                </div>
+
+                <p style=\"margin:16px 0 0;text-align:center;font-size:12px;line-height:1.6;color:#94a3b8;\">
+                    Email automatique envoyé par Readout.
+                    Pense à vérifier tes spams ou courriers indésirables si nécessaire.
+                </p>
+            </div>
+        </div>
+        ";
     }
 
     /* ============================================================
        HELPERS: HTML RENDER
     ============================================================ */
 
-    private function renderSimpleHtml(string $message, bool $success, string $title): void
-    {
+    private function renderSimpleHtml(
+        string $message,
+        bool $success,
+        string $title,
+        string $eyebrow = 'Readout',
+        string $heading = '',
+        string $description = ''
+    ): void {
         header('Content-Type: text/html; charset=utf-8');
 
-        $color = $success ? "#16a34a" : "#dc2626";
-        $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+        echo $this->renderAuthPage([
+            'title' => $title,
+            'status' => $success ? 'success' : 'error',
+            'eyebrow' => $eyebrow,
+            'heading' => $heading !== '' ? $heading : ($success ? 'C’est bon' : 'Oups'),
+            'message' => $description !== '' ? $description : $message,
+            'content' => '',
+            'footer' => 'Tu peux maintenant retourner dans l’application et te connecter.',
+            'showAppHint' => true,
+        ]);
+    }
 
-        echo "
+    private function renderAuthPage(array $data): string
+    {
+        $title = htmlspecialchars((string)($data['title'] ?? 'Readout'), ENT_QUOTES, 'UTF-8');
+        $status = (string)($data['status'] ?? 'neutral');
+        $eyebrow = htmlspecialchars((string)($data['eyebrow'] ?? 'Readout'), ENT_QUOTES, 'UTF-8');
+        $heading = htmlspecialchars((string)($data['heading'] ?? 'Information'), ENT_QUOTES, 'UTF-8');
+        $message = htmlspecialchars((string)($data['message'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $footer = htmlspecialchars((string)($data['footer'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $content = (string)($data['content'] ?? '');
+        $showAppHint = (bool)($data['showAppHint'] ?? false);
+
+        $accent = match ($status) {
+            'success' => '#22c55e',
+            'error' => '#ef4444',
+            default => '#7c3aed',
+        };
+
+        $icon = match ($status) {
+            'success' => '✓',
+            'error' => '!',
+            default => '•',
+        };
+
+        $appHint = $showAppHint
+            ? "<p class='bottom-note'>Si l’application ne s’ouvre pas automatiquement, retourne simplement sur Readout.</p>"
+            : '';
+
+        return "
         <!DOCTYPE html>
-        <html>
+        <html lang='fr'>
         <head>
             <meta charset='UTF-8'>
             <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-            <title>{$safeTitle}</title>
+            <title>{$title}</title>
+            <style>
+                :root {
+                    --bg: #0b1020;
+                    --bg-soft: #11172a;
+                    --card: rgba(17, 24, 39, 0.72);
+                    --card-border: rgba(255, 255, 255, 0.08);
+                    --text: #f8fafc;
+                    --muted: #94a3b8;
+                    --muted-2: #cbd5e1;
+                    --input-bg: rgba(255, 255, 255, 0.04);
+                    --input-border: rgba(255, 255, 255, 0.10);
+                    --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+                    --radius-xl: 28px;
+                    --radius-lg: 18px;
+                    --radius-md: 14px;
+                }
+
+                * {
+                    box-sizing: border-box;
+                }
+
+                html, body {
+                    margin: 0;
+                    padding: 0;
+                    min-height: 100%;
+                    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    background:
+                        radial-gradient(circle at top, rgba(124, 58, 237, 0.22), transparent 32%),
+                        radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.14), transparent 28%),
+                        linear-gradient(180deg, #0a0f1d 0%, #0f172a 100%);
+                    color: var(--text);
+                }
+
+                body {
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 24px;
+                }
+
+                .shell {
+                    width: 100%;
+                    max-width: 520px;
+                }
+
+                .card {
+                    position: relative;
+                    overflow: hidden;
+                    background: var(--card);
+                    border: 1px solid var(--card-border);
+                    border-radius: var(--radius-xl);
+                    padding: 32px;
+                    backdrop-filter: blur(18px);
+                    box-shadow: var(--shadow);
+                }
+
+                .glow {
+                    position: absolute;
+                    inset: auto -80px -80px auto;
+                    width: 180px;
+                    height: 180px;
+                    background: {$accent};
+                    opacity: 0.12;
+                    filter: blur(50px);
+                    border-radius: 999px;
+                    pointer-events: none;
+                }
+
+                .status-badge {
+                    width: 52px;
+                    height: 52px;
+                    border-radius: 999px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 22px;
+                    font-weight: 800;
+                    background: rgba(255, 255, 255, 0.06);
+                    border: 1px solid rgba(255, 255, 255, 0.10);
+                    color: {$accent};
+                    margin-bottom: 18px;
+                }
+
+                .eyebrow {
+                    margin: 0 0 8px;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 0.12em;
+                    text-transform: uppercase;
+                    color: var(--muted);
+                }
+
+                h1 {
+                    margin: 0;
+                    font-size: 32px;
+                    line-height: 1.1;
+                    letter-spacing: -0.03em;
+                }
+
+                .message {
+                    margin: 14px 0 0;
+                    color: var(--muted-2);
+                    font-size: 15px;
+                    line-height: 1.65;
+                }
+
+                .section {
+                    margin-top: 24px;
+                }
+
+                .stack {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                .auth-form {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                    margin-top: 8px;
+                }
+
+                .field-label {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #e2e8f0;
+                }
+
+                .auth-input {
+                    width: 100%;
+                    border: 1px solid var(--input-border);
+                    background: var(--input-bg);
+                    color: var(--text);
+                    border-radius: var(--radius-md);
+                    padding: 14px 16px;
+                    font-size: 15px;
+                    outline: none;
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+                }
+
+                .auth-input::placeholder {
+                    color: #64748b;
+                }
+
+                .auth-input:focus {
+                    border-color: rgba(124, 58, 237, 0.75);
+                    box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.18);
+                    background: rgba(255, 255, 255, 0.06);
+                }
+
+                .primary-button {
+                    width: 100%;
+                    border: 0;
+                    border-radius: var(--radius-md);
+                    padding: 15px 18px;
+                    background: linear-gradient(180deg, #8b5cf6 0%, #7c3aed 100%);
+                    color: white;
+                    font-size: 15px;
+                    font-weight: 800;
+                    cursor: pointer;
+                    transition: transform 0.15s ease, opacity 0.15s ease, filter 0.15s ease;
+                    box-shadow: 0 16px 32px rgba(124, 58, 237, 0.24);
+                }
+
+                .primary-button:hover {
+                    filter: brightness(1.03);
+                }
+
+                .primary-button:active {
+                    transform: translateY(1px);
+                }
+
+                .meta-text {
+                    margin: 2px 0 0;
+                    font-size: 12px;
+                    line-height: 1.5;
+                    color: var(--muted);
+                }
+
+                .body-muted {
+                    margin: 0;
+                    color: var(--muted-2);
+                    font-size: 14px;
+                    line-height: 1.6;
+                }
+
+                .footer {
+                    margin-top: 24px;
+                    padding-top: 18px;
+                    border-top: 1px solid rgba(255, 255, 255, 0.08);
+                    color: var(--muted);
+                    font-size: 12px;
+                    line-height: 1.6;
+                }
+
+                .bottom-note {
+                    margin: 18px 0 0;
+                    text-align: center;
+                    color: #64748b;
+                    font-size: 12px;
+                    line-height: 1.6;
+                }
+
+                @media (max-width: 560px) {
+                    .card {
+                        padding: 24px;
+                        border-radius: 22px;
+                    }
+
+                    h1 {
+                        font-size: 28px;
+                    }
+                }
+            </style>
         </head>
-        <body style='margin:0;font-family:Arial;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;'>
-            <div style='text-align:center;padding:24px;max-width:420px;'>
-                <h1 style='color:$color;'>$message</h1>
-                <p style='color:#9ca3af;margin-top:16px;'>
-                    Tu peux maintenant retourner dans l'application et te connecter.
-                </p>
-                <p style='margin-top:24px;font-size:12px;color:#6b7280;'>
-                    Si l'application ne s'ouvre pas automatiquement, retourne simplement à Readout.
-                </p>
-            </div>
+        <body>
+            <main class='shell'>
+                <section class='card'>
+                    <div class='glow'></div>
+
+                    <div class='status-badge'>{$icon}</div>
+
+                    <p class='eyebrow'>{$eyebrow}</p>
+                    <h1>{$heading}</h1>
+                    <p class='message'>{$message}</p>
+
+                    " . ($content !== '' ? "<div class='section'>{$content}</div>" : "") . "
+
+                    <div class='footer'>{$footer}</div>
+                </section>
+
+                {$appHint}
+            </main>
         </body>
         </html>
         ";
@@ -709,7 +1057,9 @@ final class AuthController
 
     private function publicUser(?array $u): array
     {
-        if (!$u) return [];
+        if (!$u) {
+            return [];
+        }
 
         $goal = isset($u['goal_pages_per_day']) ? (int)$u['goal_pages_per_day'] : 20;
         $lang = isset($u['language']) ? (string)$u['language'] : 'FR';
@@ -744,7 +1094,6 @@ final class AuthController
 
             'progress' => $progress,
 
-            // compat old front
             'xp' => (int)($progress['xp'] ?? 0),
             'level' => (int)($progress['level'] ?? 1),
             'title' => (string)($progress['title'] ?? 'Lecteur novice'),
