@@ -33,6 +33,7 @@ final class ProgressService
         'STREAK_DAY' => 40,
         'QUIZ_COMPLETED' => 50,
         'DAILY_GOAL_COMPLETED' => 10,
+        'FEEDBACK_SUBMITTED' => 75,
     ];
 
     private ProgressRepository $progressRepo;

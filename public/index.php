@@ -27,6 +27,7 @@ use App\Controllers\BookDiscoveryController;
 use App\Controllers\CardsController;
 use App\Controllers\QuizController;
 use App\Controllers\DictionaryController;
+use App\Controllers\FeedbackController;
 
 /**
  * Bootstrap env
@@ -158,6 +159,7 @@ $bookDiscovery = new BookDiscoveryController();
 $cards         = new CardsController();
 $quiz          = new QuizController();
 $dictionary    = new DictionaryController();
+$feedback      = new FeedbackController();
 
 /**
  * API prefix
@@ -270,6 +272,10 @@ $router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", fn($p) => $quiz-
 
 // Dictionary
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
+
+// Feedback
+$router->add('GET',  "{$prefix}/feedback/me", fn() => $feedback->me());
+$router->add('POST', "{$prefix}/feedback",    fn() => $feedback->submit());
 
 /**
  * Dispatch
