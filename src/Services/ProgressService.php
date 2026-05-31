@@ -31,7 +31,6 @@ final class ProgressService
         'PAGES_READ' => 2,
         'BOOK_DONE' => 150,
         'STREAK_DAY' => 40,
-        'QUIZ_COMPLETED' => 50,
         'DAILY_GOAL_COMPLETED' => 10,
         'FEEDBACK_SUBMITTED' => 75,
     ];
@@ -46,38 +45,21 @@ final class ProgressService
     public function award(int $userId, string $type, int $delta = 0, array $meta = []): array
     {
         $before = $this->snapshot($userId);
-        $cardService = new CardService();
 
         if ($delta === 0) {
             $delta = $this->computeDeltaFromType($type, $meta);
         }
 
         if ($delta === 0) {
-            $newCards = $cardService->checkUnlocks($userId);
             $after = $this->snapshot($userId);
-
-            return $this->attachAwardMeta(
-                $after,
-                $this->buildLevelUpPayload($before, $after),
-                $type,
-                0,
-                $this->buildCardUnlockPayload($newCards)
-            );
+            return $this->attachAwardMeta($after, $this->buildLevelUpPayload($before, $after), $type, 0);
         }
 
         $this->progressRepo->addXpEvent($userId, $type, $delta, $meta);
         $this->progressRepo->addXpToUser($userId, $delta);
 
-        $newCards = $cardService->checkUnlocks($userId);
         $after = $this->snapshot($userId);
-
-        return $this->attachAwardMeta(
-            $after,
-            $this->buildLevelUpPayload($before, $after),
-            $type,
-            $delta,
-            $this->buildCardUnlockPayload($newCards)
-        );
+        return $this->attachAwardMeta($after, $this->buildLevelUpPayload($before, $after), $type, $delta);
     }
 
     public function snapshot(int $userId): array
@@ -125,23 +107,13 @@ final class ProgressService
         array $snapshot,
         array $levelUp,
         string $type,
-        int $delta,
-        array $cardUnlock
+        int $delta
     ): array {
         return [
             ...$snapshot,
             'awardedXp' => $delta,
             'awardType' => $type,
             'levelUp' => $levelUp,
-            'cardUnlock' => $cardUnlock,
-        ];
-    }
-
-    private function buildCardUnlockPayload(array $cards): array
-    {
-        return [
-            'happened' => count($cards) > 0,
-            'cards' => array_values($cards),
         ];
     }
 

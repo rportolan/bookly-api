@@ -12,6 +12,7 @@ use App\Core\Jwt;
 use App\Core\Mailer;
 
 use App\Repositories\EmailVerificationRepository;
+use App\Repositories\MagicLinkRepository;
 use App\Repositories\PasswordResetRepository;
 use App\Repositories\RefreshTokenRepository;
 use App\Repositories\UserRepository;
@@ -164,6 +165,256 @@ final class AuthController
                 'expiresIn' => (int)Env::get('JWT_ACCESS_TTL', '900'),
             ],
         ]);
+    }
+
+    /* ============================================================
+       GOOGLE OAUTH
+    ============================================================ */
+
+    /**
+     * GET /v1/auth/google/start
+     * Redirige vers l'écran de consentement Google.
+     */
+    public function googleStart(): void
+    {
+        $clientId    = (string)Env::get('GOOGLE_CLIENT_ID', '');
+        $redirectUri = (string)Env::get('GOOGLE_REDIRECT_URI', '');
+
+        if ($clientId === '' || $redirectUri === '') {
+            throw new HttpException(500, 'SERVER_MISCONFIG', [], 'Google OAuth not configured');
+        }
+
+        $params = http_build_query([
+            'client_id'     => $clientId,
+            'redirect_uri'  => $redirectUri,
+            'response_type' => 'code',
+            'scope'         => 'openid email profile',
+            'prompt'        => 'select_account',
+            'access_type'   => 'online',
+        ]);
+
+        header("Location: https://accounts.google.com/o/oauth2/v2/auth?{$params}");
+        exit;
+    }
+
+    /**
+     * GET /v1/auth/google/callback?code=...
+     * Échange le code contre les infos utilisateur, crée/retrouve le compte,
+     * émet des tokens, puis redirige vers l'app mobile.
+     */
+    public function googleCallback(): void
+    {
+        $code = trim((string)($_GET['code'] ?? ''));
+
+        if ($code === '') {
+            $this->redirectToAppError('google_cancelled');
+            return;
+        }
+
+        $clientId     = (string)Env::get('GOOGLE_CLIENT_ID', '');
+        $clientSecret = (string)Env::get('GOOGLE_CLIENT_SECRET', '');
+        $redirectUri  = (string)Env::get('GOOGLE_REDIRECT_URI', '');
+        $appScheme    = (string)Env::get('APP_SCHEME', 'readoutmobile');
+
+        // Échange du code contre un access token Google
+        $tokenRes = $this->httpPost('https://oauth2.googleapis.com/token', [
+            'code'          => $code,
+            'client_id'     => $clientId,
+            'client_secret' => $clientSecret,
+            'redirect_uri'  => $redirectUri,
+            'grant_type'    => 'authorization_code',
+        ]);
+
+        if (empty($tokenRes['access_token'])) {
+            $this->redirectToAppError('google_token_failed');
+            return;
+        }
+
+        // Récupération des infos utilisateur Google
+        $userInfo = $this->httpGet(
+            'https://www.googleapis.com/oauth2/v3/userinfo',
+            $tokenRes['access_token']
+        );
+
+        $googleId = (string)($userInfo['sub'] ?? '');
+        $email    = trim(strtolower((string)($userInfo['email'] ?? '')));
+        $name     = trim((string)($userInfo['given_name'] ?? $userInfo['name'] ?? ''));
+        $avatar   = (string)($userInfo['picture'] ?? '');
+
+        if ($googleId === '' || $email === '') {
+            $this->redirectToAppError('google_info_missing');
+            return;
+        }
+
+        $repo = new UserRepository();
+        $user = $repo->findByGoogleId($googleId);
+        $isNew = false;
+
+        if (!$user) {
+            // Essaie de retrouver un compte existant par email
+            $user = $repo->findByEmail($email);
+            if ($user) {
+                // Lie le Google ID au compte existant
+                $repo->linkGoogleId((int)$user['id'], $googleId, $avatar ?: null);
+                $user = $repo->findById((int)$user['id']);
+            } else {
+                // Nouveau compte
+                $isNew  = true;
+                $userId = $repo->create([
+                    'email'             => $email,
+                    'first_name'        => $name,
+                    'google_id'         => $googleId,
+                    'avatar_url'        => $avatar ?: null,
+                    'email_verified_at' => date('Y-m-d H:i:s'),
+                ]);
+                $user = $repo->findById($userId);
+            }
+        }
+
+        if (!$user) {
+            $this->redirectToAppError('user_not_found');
+            return;
+        }
+
+        [$at, $rt] = $this->issueTokens((int)$user['id']);
+
+        $newFlag = $isNew || empty($user['onboarding_completed']) ? '1' : '0';
+
+        header("Location: {$appScheme}://auth-callback?at=" . urlencode($at) . "&rt=" . urlencode($rt) . "&new={$newFlag}");
+        exit;
+    }
+
+    /* ============================================================
+       MAGIC LINK
+    ============================================================ */
+
+    /**
+     * POST /v1/auth/magic-link/request
+     * Body: { "email": "..." }
+     * Envoie un lien magique de connexion par email.
+     */
+    public function magicLinkRequest(): void
+    {
+        $body  = Request::json();
+        $email = trim(strtolower((string)($body['email'] ?? '')));
+
+        // Réponse générique anti-énumération
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        $repo = new UserRepository();
+        $user = $repo->findByEmail($email);
+
+        if (!$user) {
+            // Crée un compte minimal — il sera complété après l'onboarding
+            $userId = $repo->create([
+                'email'             => $email,
+                'email_verified_at' => null,
+            ]);
+            $user = $repo->findById($userId);
+        }
+
+        $userId    = (int)$user['id'];
+        $mlRepo    = new MagicLinkRepository();
+        $cooldown  = 60;
+
+        if (!$mlRepo->canSend($email, $cooldown)) {
+            // Silencieux : on ne révèle pas s'il y a un cooldown
+            Response::ok(['sent' => true]);
+            return;
+        }
+
+        $ttl      = (int)Env::get('MAGIC_LINK_TTL', '900'); // 15 min par défaut
+        $rawToken = bin2hex(random_bytes(32));
+        $hash     = hash('sha256', $rawToken);
+
+        $mlRepo->upsertForUser($userId, $email, $hash, $ttl);
+
+        $this->sendMagicLinkEmail($email, $rawToken);
+
+        Response::ok(['sent' => true]);
+    }
+
+    /**
+     * GET /v1/auth/magic-link/verify?token=...
+     * Vérifie le token, émet des JWT, redirige vers l'app.
+     */
+    public function magicLinkVerify(): void
+    {
+        $rawToken  = trim((string)($_GET['token'] ?? ''));
+        $appScheme = (string)Env::get('APP_SCHEME', 'readoutmobile');
+
+        if ($rawToken === '') {
+            $this->renderSimpleHtml('Lien invalide.', false, 'Bookly – Connexion', 'Connexion', 'Lien invalide', 'Ce lien de connexion est incorrect.');
+            return;
+        }
+
+        $hash   = hash('sha256', $rawToken);
+        $mlRepo = new MagicLinkRepository();
+        $row    = $mlRepo->findValidByTokenHash($hash);
+
+        if (!$row) {
+            $this->renderSimpleHtml('Lien invalide ou expiré.', false, 'Bookly – Connexion', 'Connexion', 'Lien indisponible', 'Ce lien est invalide ou a expiré. Demande-en un nouveau depuis l\'application.');
+            return;
+        }
+
+        $userId   = (int)$row['user_id'];
+        $userRepo = new UserRepository();
+        $user     = $userRepo->findById($userId);
+
+        if (!$user) {
+            $this->renderSimpleHtml('Erreur.', false, 'Bookly – Connexion', 'Connexion', 'Erreur', 'Une erreur est survenue.');
+            return;
+        }
+
+        // Marque le token utilisé et vérifie l'email
+        $mlRepo->markUsed((int)$row['id']);
+        $userRepo->markEmailVerified($userId);
+
+        [$at, $rt] = $this->issueTokens($userId);
+
+        $isNew = empty($user['onboarding_completed']) ? '1' : '0';
+
+        // Redirige vers l'app
+        header("Location: {$appScheme}://auth-callback?at=" . urlencode($at) . "&rt=" . urlencode($rt) . "&new={$isNew}");
+        exit;
+    }
+
+    /* ============================================================
+       ONBOARDING
+    ============================================================ */
+
+    /**
+     * POST /v1/auth/onboarding
+     * Sauvegarde les données d'onboarding (prénom, objectif, genres).
+     * Nécessite un token valide.
+     */
+    public function saveOnboarding(): void
+    {
+        $uid  = Auth::requireAuth();
+        $body = Request::json();
+
+        $firstName    = trim((string)($body['firstName']    ?? ''));
+        $readingGoal  = trim((string)($body['readingGoal']  ?? 'regulier'));
+        $rawGenres    = is_array($body['preferredGenres'] ?? null) ? $body['preferredGenres'] : [];
+
+        $allowedGoals = ['occasionnel', 'regulier', 'passionne', 'vorace'];
+        if (!in_array($readingGoal, $allowedGoals, true)) {
+            $readingGoal = 'regulier';
+        }
+
+        $genres = array_values(array_filter(
+            array_map(fn($g) => trim((string)$g), $rawGenres),
+            fn($g) => $g !== ''
+        ));
+
+        $repo = new UserRepository();
+        $repo->saveOnboarding($uid, $firstName, $readingGoal, $genres);
+
+        $user = $repo->findById($uid);
+        Response::ok(['user' => $this->publicUser($user)]);
     }
 
     /* ============================================================
@@ -1041,6 +1292,66 @@ final class AuthController
     }
 
     /* ============================================================
+       HELPERS: MAGIC LINK EMAIL
+    ============================================================ */
+
+    private function sendMagicLinkEmail(string $email, string $rawToken): void
+    {
+        $appUrl  = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
+        $linkUrl = $appUrl . "/v1/auth/magic-link/verify?token=" . urlencode($rawToken);
+
+        $html = $this->buildEmailLayout([
+            'eyebrow'     => 'Connexion à Bookly',
+            'title'       => 'Ton lien magique',
+            'intro'       => "Clique sur le bouton ci-dessous pour te connecter instantanément à Bookly. Aucun mot de passe nécessaire.",
+            'buttonLabel' => 'Se connecter à Bookly',
+            'buttonUrl'   => $linkUrl,
+            'note'        => "Ce lien est valable 15 minutes et ne peut être utilisé qu'une seule fois. Si tu n'es pas à l'origine de cette demande, ignore cet email.",
+        ]);
+
+        Mailer::send($email, 'Ton lien de connexion Bookly', $html);
+    }
+
+    /* ============================================================
+       HELPERS: GOOGLE HTTP
+    ============================================================ */
+
+    private function httpPost(string $url, array $data): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query($data),
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $body = curl_exec($ch);
+        curl_close($ch);
+        return is_string($body) ? (json_decode($body, true) ?? []) : [];
+    }
+
+    private function httpGet(string $url, string $bearerToken): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => ["Authorization: Bearer {$bearerToken}"],
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $body = curl_exec($ch);
+        curl_close($ch);
+        return is_string($body) ? (json_decode($body, true) ?? []) : [];
+    }
+
+    private function redirectToAppError(string $reason): void
+    {
+        $appScheme = (string)Env::get('APP_SCHEME', 'readoutmobile');
+        header("Location: {$appScheme}://auth-error?reason={$reason}");
+        exit;
+    }
+
+    /* ============================================================
        JWT HELPERS
     ============================================================ */
 
@@ -1112,28 +1423,36 @@ final class AuthController
             // noop
         }
 
-        return [
-            'id' => (int)($u['id'] ?? 0),
-            'email' => (string)($u['email'] ?? ''),
-            'username' => (string)($u['username'] ?? ''),
-            'firstName' => (string)($u['first_name'] ?? ''),
-            'lastName' => (string)($u['last_name'] ?? ''),
-            'bio' => $u['bio'] ?? null,
+        $rawGenres = (string)($u['preferred_genres'] ?? '');
+        $genres    = $rawGenres !== '' ? (json_decode($rawGenres, true) ?? []) : [];
 
-            'emailVerified' => $isVerified,
+        return [
+            'id'        => (int)($u['id'] ?? 0),
+            'email'     => (string)($u['email'] ?? ''),
+            'username'  => $u['username'] !== null ? (string)$u['username'] : null,
+            'firstName' => (string)($u['first_name'] ?? ''),
+            'lastName'  => (string)($u['last_name'] ?? ''),
+            'bio'       => $u['bio'] ?? null,
+            'avatarUrl' => $u['avatar_url'] ?? null,
+
+            'emailVerified'   => $isVerified,
             'emailVerifiedAt' => $u['email_verified_at'] ?? null,
+
+            'onboardingCompleted' => !empty($u['onboarding_completed']),
+            'readingGoal'         => $u['reading_goal'] ?? null,
+            'preferredGenres'     => is_array($genres) ? $genres : [],
 
             'progress' => $progress,
 
-            'xp' => (int)($progress['xp'] ?? 0),
-            'level' => (int)($progress['level'] ?? 1),
-            'title' => (string)($progress['title'] ?? 'Lecteur novice'),
+            'xp'     => (int)($progress['xp'] ?? 0),
+            'level'  => (int)($progress['level'] ?? 1),
+            'title'  => (string)($progress['title'] ?? 'Lecteur novice'),
             'badges' => is_array($progress['badges'] ?? null) ? $progress['badges'] : [],
 
             'preferences' => [
                 'goalPagesPerDay' => $goal,
-                'language' => $lang,
-                'density' => $density,
+                'language'        => $lang,
+                'density'         => $density,
             ],
             'createdAt' => $u['created_at'] ?? null,
             'updatedAt' => $u['updated_at'] ?? null,

@@ -78,6 +78,15 @@ final class OpenLibraryClient
         return $this->getJson($url);
     }
 
+    public function getSubject(string $subject, int $limit = 20): array
+    {
+        $subject = strtolower(trim($subject));
+        $limit   = max(1, min(50, $limit));
+        $url     = $this->baseUrl . '/subjects/' . rawurlencode($subject)
+                 . '.json?limit=' . $limit;
+        return $this->getJson($url);
+    }
+
     public function coverUrlFromEdition(string $editionId, string $size = 'L'): string
     {
         $size = strtoupper(trim($size));

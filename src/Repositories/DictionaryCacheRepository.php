@@ -12,7 +12,7 @@ final class DictionaryCacheRepository
         $pdo = Db::pdo();
 
         $stmt = $pdo->prepare("
-            SELECT id, lang, term, definition, fetched_at, expires_at
+            SELECT id, lang, term, data, fetched_at, expires_at
             FROM dictionary_cache
             WHERE lang = :lang
               AND term = :term
@@ -20,26 +20,28 @@ final class DictionaryCacheRepository
             LIMIT 1
         ");
 
-        $stmt->execute([
-            'lang' => $lang,
-            'term' => $term,
-        ]);
+        $stmt->execute(['lang' => $lang, 'term' => $term]);
 
         $row = $stmt->fetch();
-        return $row ?: null;
+        if (!$row) return null;
+
+        $decoded = json_decode((string)$row['data'], true);
+        if (!is_array($decoded)) return null;
+
+        return $decoded;
     }
 
-    public function upsert(string $lang, string $term, string $definition, int $ttlDays): void
+    public function upsert(string $lang, string $term, array $data, int $ttlDays): void
     {
-        $pdo = Db::pdo();
-
+        $pdo     = Db::pdo();
         $ttlDays = max(1, min(365, $ttlDays));
+        $json    = json_encode($data, JSON_UNESCAPED_UNICODE);
 
         $stmt = $pdo->prepare("
-            INSERT INTO dictionary_cache (lang, term, definition, fetched_at, expires_at)
-            VALUES (:lang, :term, :definition, NOW(), DATE_ADD(NOW(), INTERVAL :ttl DAY))
+            INSERT INTO dictionary_cache (lang, term, data, fetched_at, expires_at)
+            VALUES (:lang, :term, :data, NOW(), DATE_ADD(NOW(), INTERVAL :ttl DAY))
             ON DUPLICATE KEY UPDATE
-                definition = VALUES(definition),
+                data       = VALUES(data),
                 fetched_at = NOW(),
                 expires_at = DATE_ADD(NOW(), INTERVAL :ttl DAY)
         ");
@@ -47,8 +49,8 @@ final class DictionaryCacheRepository
         $stmt->execute([
             'lang' => $lang,
             'term' => $term,
-            'definition' => $definition,
-            'ttl' => $ttlDays,
+            'data' => $json,
+            'ttl'  => $ttlDays,
         ]);
     }
 }

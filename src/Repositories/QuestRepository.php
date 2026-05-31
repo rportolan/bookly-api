@@ -54,15 +54,6 @@ final class QuestRepository
         $stmt->execute(['uid' => $userId]);
         $chapters = (int)($stmt->fetchColumn() ?: 0);
 
-        // Quizzes completed: count distinct quiz_id attempted
-        $stmt = $pdo->prepare("
-            SELECT COUNT(DISTINCT qa.quiz_id) AS quizzes_completed
-            FROM quiz_attempts qa
-            WHERE qa.user_id = :uid
-        ");
-        $stmt->execute(['uid' => $userId]);
-        $quizzesCompleted = (int)($stmt->fetchColumn() ?: 0);
-
         // Streak days: computed from reading_logs
         $streakDays = (new ReadingRepository())->computeCurrentStreakDays($userId);
 
@@ -75,7 +66,6 @@ final class QuestRepository
             'vocab' => $vocab,
             'chapters' => $chapters,
             'streakDays' => $streakDays,
-            'quizzesCompleted' => $quizzesCompleted,
         ];
     }
 }

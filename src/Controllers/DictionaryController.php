@@ -14,7 +14,7 @@ final class DictionaryController
 {
     public function lookup(): void
     {
-        Auth::requireAuth(); // évite que n’importe qui spam ton API
+        Auth::requireAuth();
 
         $term = trim((string)($_GET['term'] ?? ''));
         $term = $this->normalizeTerm($term);
@@ -26,24 +26,29 @@ final class DictionaryController
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'term'], 'term too long');
         }
 
-        $lang = 'fr';
-
+        $lang  = 'fr';
         $cache = new DictionaryCacheRepository();
-        $hit = $cache->getFresh($lang, $term);
+        try {
+            $hit = $cache->getFresh($lang, $term);
+        } catch (\Throwable $e) {
+            error_log('[DICTIONARY] cache getFresh failed: ' . $e->getMessage());
+            $hit = null;
+        }
 
         if ($hit) {
-            Response::ok([
-                'term' => (string)$hit['term'],
-                'definition' => (string)$hit['definition'],
-            ]);
+            Response::ok($hit);
             return;
         }
 
         $client = new WiktionaryClient();
-        $res = $client->getDefinitionFr($term);
+        $res    = $client->getDefinitionsFr($term);
 
-        $ttl = (int)Env::get('DICTIONARY_CACHE_TTL_DAYS', '30');
-        $cache->upsert($lang, $term, $res['definition'], $ttl);
+        try {
+            $ttl = (int)Env::get('DICTIONARY_CACHE_TTL_DAYS', '30');
+            $cache->upsert($lang, $term, $res, $ttl);
+        } catch (\Throwable $e) {
+            error_log('[DICTIONARY] cache upsert failed: ' . $e->getMessage());
+        }
 
         Response::ok($res);
     }
@@ -52,7 +57,6 @@ final class DictionaryController
     {
         $t = trim($term);
         $t = preg_replace('/\s+/u', ' ', $t ?? '') ?? '';
-        // On garde accents, apostrophes, tirets, etc.
         return $t;
     }
 }

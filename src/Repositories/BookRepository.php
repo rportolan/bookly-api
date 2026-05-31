@@ -267,6 +267,20 @@ final class BookRepository
     public function deleteForUser(int $userId, int $userBookId): bool
     {
         $pdo = Db::pdo();
+
+        // Clean up learn_progress rows for all items belonging to this book.
+        // The vocab/quotes/characters rows are cascade-deleted with user_books,
+        // but learn_progress has no FK to those tables, so we must clean it manually.
+        $pdo->prepare("
+            DELETE lp FROM learn_progress lp
+            WHERE lp.user_id = :uid
+              AND (
+                (lp.item_type = 'vocab'     AND lp.item_id IN (SELECT id FROM vocab       WHERE user_book_id = :ubid))
+                OR (lp.item_type = 'quote'  AND lp.item_id IN (SELECT id FROM quotes      WHERE user_book_id = :ubid))
+                OR (lp.item_type = 'character' AND lp.item_id IN (SELECT id FROM characters WHERE user_book_id = :ubid))
+              )
+        ")->execute(['uid' => $userId, 'ubid' => $userBookId]);
+
         $stmt = $pdo->prepare("DELETE FROM user_books WHERE id = :id AND user_id = :user_id");
         $stmt->execute(['id' => $userBookId, 'user_id' => $userId]);
 

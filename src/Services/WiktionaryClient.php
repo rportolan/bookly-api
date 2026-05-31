@@ -11,32 +11,30 @@ final class WiktionaryClient
     private string $baseUrl = 'https://fr.wiktionary.org/w/api.php';
 
     /**
-     * @return array{term:string, definition:string}
+     * Returns an array of word-type groups for the French section of a Wiktionary entry.
+     *
+     * @return array{term:string, groups:array<array{wordType:string, gender:string|null, definitions:array<array{text:string, example:string|null}>}>}
      */
-    public function getDefinitionFr(string $term): array
+    public function getDefinitionsFr(string $term): array
     {
         $t = trim($term);
         if ($t === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'term'], 'term is required');
         }
 
-        // MediaWiki Action API: parse wikitext
         $params = [
-            'action' => 'parse',
-            'format' => 'json',
+            'action'        => 'parse',
+            'format'        => 'json',
             'formatversion' => '2',
-            'prop' => 'wikitext',
-            'page' => $t,
-            'redirects' => '1',
+            'prop'          => 'wikitext',
+            'page'          => $t,
+            'redirects'     => '1',
         ];
 
-        $url = $this->baseUrl . '?' . http_build_query($params);
-
+        $url  = $this->baseUrl . '?' . http_build_query($params);
         $json = $this->getJson($url);
 
-        // Si page inexistante
         if (isset($json['error'])) {
-            // exemple: {"error":{"code":"missingtitle","info":"The page you specified doesn't exist"}}
             $code = (string)($json['error']['code'] ?? 'unknown');
             if ($code === 'missingtitle' || $code === 'missingtitle-ns') {
                 throw new HttpException(404, 'DICTIONARY_NOT_FOUND', ['term' => $t], 'Definition not found');
@@ -49,96 +47,155 @@ final class WiktionaryClient
             throw new HttpException(404, 'DICTIONARY_NOT_FOUND', ['term' => $t], 'Definition not found');
         }
 
-        $def = $this->extractFirstFrenchDefinition($wikitext);
+        $groups = $this->extractFrenchGroups($wikitext);
 
-        if ($def === null || $def === '') {
+        if (empty($groups)) {
             throw new HttpException(404, 'DICTIONARY_NOT_FOUND', ['term' => $t], 'Definition not found');
         }
 
-        return [
-            'term' => $t,
-            'definition' => $def,
-        ];
+        return ['term' => $t, 'groups' => $groups];
     }
 
-    private function extractFirstFrenchDefinition(string $wikitext): ?string
+    /**
+     * Parse the French section into groups per word type.
+     * Each group has: wordType, gender, definitions[]{text, example}
+     */
+    private function extractFrenchGroups(string $wikitext): array
     {
-        // 1) Isoler la section "Français"
-        // Sur fr.wiktionary, c'est généralement: "== {{langue|fr}} ==" ou "== Français =="
-        $start = null;
-
-        // Cherche l'en-tête FR
-        if (preg_match('/^==\s*(\{\{langue\|fr\}\}|Français)\s*==\s*$/mi', $wikitext, $m, PREG_OFFSET_CAPTURE)) {
-            $start = (int)$m[0][1];
+        // Isolate the French section (== {{langue|fr}} == or == Français ==)
+        if (!preg_match('/^==\s*(\{\{langue\|fr\}\}|Fran[çc]ais)\s*==\s*$/mi', $wikitext, $m, PREG_OFFSET_CAPTURE)) {
+            return [];
         }
-        if ($start === null) return null;
-
+        $start = (int)$m[0][1];
         $after = substr($wikitext, $start);
 
-        // Coupe à la prochaine langue (prochain "== ... ==")
-        $endPos = null;
-        if (preg_match('/^\s*==\s*[^=].*?\s*==\s*$/m', $after, $m2, PREG_OFFSET_CAPTURE, 10)) {
-            // On a matché le premier header, puis on cherche le suivant: on prend le 2e header
-            // Plus simple: on cherche tous les headers et on prend le 2e
+        // Cut at the next top-level language section (== ... ==) that is not the first
+        if (preg_match_all('/^==\s*[^=].*?==\s*$/m', $after, $all, PREG_OFFSET_CAPTURE) && count($all[0]) >= 2) {
+            $after = substr($after, 0, (int)$all[0][1][1]);
         }
 
-        if (preg_match_all('/^\s*==\s*[^=].*?\s*==\s*$/m', $after, $all, PREG_OFFSET_CAPTURE) && count($all[0]) >= 2) {
-            $endPos = (int)$all[0][1][1]; // position du 2e header dans $after
-        }
+        $lines  = preg_split("/\r\n|\n|\r/", $after) ?: [];
+        $groups = [];
 
-        $frSection = $endPos !== null ? substr($after, 0, $endPos) : $after;
+        $currentType   = null;
+        $currentGender = null;
+        $currentDefs   = [];
 
-        // 2) Trouver la première définition: une ligne qui commence par "# "
-        $lines = preg_split("/\r\n|\n|\r/", $frSection) ?: [];
         foreach ($lines as $line) {
-            $line = trim($line);
+            $trimmed = trim($line);
 
-            // On évite #* (exemples) et on veut juste # ...
-            if (preg_match('/^#(?![*:])\s+(.+)$/u', $line, $m)) {
-                $raw = $m[1];
-
-                // 3) Nettoyage léger du wikicode
-                $clean = $this->cleanupWikicode($raw);
-
-                if ($clean !== '') {
-                    return $clean;
+            // === {{S|word_type|fr}} === or === {{S|word_type|fr|num=2}} ===
+            if (preg_match('/^===\s*\{\{S\|([^|}\s]+)/u', $trimmed, $sm)) {
+                // Save previous group
+                if ($currentType !== null && !empty($currentDefs)) {
+                    $groups[] = [
+                        'wordType'    => $currentType,
+                        'gender'      => $currentGender,
+                        'definitions' => $currentDefs,
+                    ];
                 }
+                $currentType   = $this->normalizeWordType($sm[1]);
+                $currentGender = null;
+                $currentDefs   = [];
+                continue;
+            }
+
+            if ($currentType === null) {
+                continue;
+            }
+
+            // Gender from {{m}}, {{f}}, {{mf}}, {{n}} on a line starting with "'''"
+            if ($currentGender === null && preg_match('/\{\{(mf?|f|n)\}\}/u', $trimmed, $gm)) {
+                $currentGender = $this->normalizeGender($gm[1]);
+            }
+
+            // Definition line: # text (not #: #* ## etc.)
+            if (preg_match('/^#(?![#*:])\s*(.+)$/u', $trimmed, $dm)) {
+                $text = $this->cleanupWikicode($dm[1]);
+                if ($text !== '') {
+                    $currentDefs[] = ['text' => $text];
+                }
+                continue;
             }
         }
 
-        return null;
+        // Flush last group
+        if ($currentType !== null && !empty($currentDefs)) {
+            $groups[] = [
+                'wordType'    => $currentType,
+                'gender'      => $currentGender,
+                'definitions' => $currentDefs,
+            ];
+        }
+
+        return $groups;
+    }
+
+    private function normalizeWordType(string $raw): string
+    {
+        $map = [
+            'nom'          => 'nom',
+            'nom-pr'       => 'nom propre',
+            'verb'         => 'verbe',
+            'verbe'        => 'verbe',
+            'adj'          => 'adjectif',
+            'adjectif'     => 'adjectif',
+            'adv'          => 'adverbe',
+            'adverbe'      => 'adverbe',
+            'prep'         => 'préposition',
+            'préposition'  => 'préposition',
+            'conj'         => 'conjonction',
+            'conjonction'  => 'conjonction',
+            'inter'        => 'interjection',
+            'interjection' => 'interjection',
+            'pron'         => 'pronom',
+            'pronom'       => 'pronom',
+            'art'          => 'article',
+            'article'      => 'article',
+            'loc-nom'      => 'locution nominale',
+            'loc-verb'     => 'locution verbale',
+            'loc-adj'      => 'locution adjectivale',
+            'loc-adv'      => 'locution adverbiale',
+        ];
+
+        $lower = mb_strtolower($raw);
+        return $map[$lower] ?? $lower;
+    }
+
+    private function normalizeGender(string $raw): string
+    {
+        return match ($raw) {
+            'm'  => 'masculin',
+            'f'  => 'féminin',
+            'mf' => 'masculin/féminin',
+            'n'  => 'neutre',
+            default => $raw,
+        };
     }
 
     private function cleanupWikicode(string $s): string
     {
         $t = $s;
 
-        // retire <ref>...</ref>
         $t = preg_replace('#<ref[^>]*>.*?</ref>#si', '', $t) ?? $t;
         $t = preg_replace('#<ref[^/]*/>#si', '', $t) ?? $t;
 
-        // retire les templates {{...}} (simple, non récursif)
-        // (suffisant pour une V1)
+        // Remove templates but preserve their visible text argument if present: {{term|text}}
+        // Strip {{lang|...}} style templates entirely
         $t = preg_replace('/\{\{[^{}]*\}\}/u', '', $t) ?? $t;
 
-        // liens wiki [[mot|texte]] ou [[mot]]
+        // Wiki links [[word|display]] → display, [[word]] → word
         $t = preg_replace('/\[\[[^\]|]+\|([^\]]+)\]\]/u', '$1', $t) ?? $t;
         $t = preg_replace('/\[\[([^\]]+)\]\]/u', '$1', $t) ?? $t;
 
-        // italique/bold wiki '' '' ''' '''
+        // Bold/italic
         $t = str_replace(["'''", "''"], '', $t);
 
-        // HTML entities
         $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-        // espaces
         $t = preg_replace('/\s+/u', ' ', $t) ?? $t;
-        $t = trim($t);
-
-        // enlève ponctuation résiduelle bizarre
         $t = trim($t, " \t\n\r\0\x0B-–—");
 
-        return $t;
+        return trim($t);
     }
 
     private function getJson(string $url): array
@@ -150,28 +207,23 @@ final class WiktionaryClient
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => $timeout,
+                CURLOPT_TIMEOUT        => $timeout,
                 CURLOPT_CONNECTTIMEOUT => min(3, $timeout),
                 CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_HTTPHEADER => [
+                CURLOPT_HTTPHEADER     => [
                     'Accept: application/json',
                     'User-Agent: Bookly-API/1.0 (dictionary feature)',
                 ],
             ]);
 
-            $raw = curl_exec($ch);
+            $raw   = curl_exec($ch);
             $errno = curl_errno($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $err = curl_error($ch);
+            $err   = curl_error($ch);
             curl_close($ch);
 
             if ($errno !== 0 || $raw === false) {
-                throw new HttpException(
-                    502,
-                    'DICTIONARY_UNREACHABLE',
-                    ['curl_errno' => $errno, 'curl_error' => $err],
-                    'Dictionary provider unreachable'
-                );
+                throw new HttpException(502, 'DICTIONARY_UNREACHABLE', ['curl_errno' => $errno, 'curl_error' => $err], 'Dictionary provider unreachable');
             }
 
             return $this->decodeAndValidate($raw, $status);
@@ -179,9 +231,9 @@ final class WiktionaryClient
 
         $context = stream_context_create([
             'http' => [
-                'method' => 'GET',
+                'method'  => 'GET',
                 'timeout' => $timeout,
-                'header' => "Accept: application/json\r\nUser-Agent: Bookly-API/1.0 (dictionary feature)\r\n",
+                'header'  => "Accept: application/json\r\nUser-Agent: Bookly-API/1.0 (dictionary feature)\r\n",
             ],
         ]);
 
@@ -193,7 +245,7 @@ final class WiktionaryClient
         $status = 200;
         if (isset($http_response_header) && is_array($http_response_header)) {
             foreach ($http_response_header as $h) {
-                if (preg_match('#HTTP/\S+\s+(\d{3})#', (string)$h, $m) ) {
+                if (preg_match('#HTTP/\S+\s+(\d{3})#', (string)$h, $m)) {
                     $status = (int)$m[1];
                     break;
                 }
@@ -213,12 +265,7 @@ final class WiktionaryClient
         }
 
         if (!is_array($json)) {
-            throw new HttpException(
-                502,
-                'DICTIONARY_BAD_RESPONSE',
-                ['raw' => mb_substr($raw, 0, 800)],
-                'Dictionary provider bad response'
-            );
+            throw new HttpException(502, 'DICTIONARY_BAD_RESPONSE', ['raw' => mb_substr($raw, 0, 800)], 'Dictionary provider bad response');
         }
 
         return $json;

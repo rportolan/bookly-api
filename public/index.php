@@ -24,10 +24,16 @@ use App\Controllers\DashboardController;
 use App\Controllers\GoogleBooksController;
 use App\Controllers\OpenLibraryController;
 use App\Controllers\BookDiscoveryController;
-use App\Controllers\CardsController;
-use App\Controllers\QuizController;
 use App\Controllers\DictionaryController;
 use App\Controllers\FeedbackController;
+use App\Controllers\RecommendationsController;
+use App\Controllers\ChallengesController;
+use App\Controllers\BlocksController;
+use App\Controllers\AnalysisController;
+use App\Controllers\CharactersController;
+use App\Controllers\ActivityController;
+use App\Controllers\StatsController;
+use App\Controllers\ExploreController;
 
 /**
  * Bootstrap env
@@ -156,10 +162,16 @@ $learn         = new LearnController();
 $gbooks        = new GoogleBooksController();
 $olib          = new OpenLibraryController();
 $bookDiscovery = new BookDiscoveryController();
-$cards         = new CardsController();
-$quiz          = new QuizController();
-$dictionary    = new DictionaryController();
-$feedback      = new FeedbackController();
+$dictionary       = new DictionaryController();
+$feedback         = new FeedbackController();
+$recommendations  = new RecommendationsController();
+$challenges       = new ChallengesController();
+$blocks           = new BlocksController();
+$analysis         = new AnalysisController();
+$characters       = new CharactersController();
+$statsCtrl        = new StatsController();
+$activityCtrl     = new ActivityController();
+$exploreCtrl      = new ExploreController();
 
 /**
  * API prefix
@@ -177,8 +189,6 @@ $prefix = '/v1';
 // book:search     — 30  / min      (API externe, cache en place)
 // book:import     — 10  / min      (API externe + écriture DB)
 // learn:session   — 20  / min      (XP award, idempotent mais coûteux)
-// quiz:attempt    — 20  / min      (XP award, idempotent par quizId)
-// card:claim      — 30  / min      (lecture DB légère)
 // feedback:submit — 3   / heure    (écriture unique par user)
 // global          — 200 / min      (filet de sécurité toutes routes)
 // -------------------------------------------------------------------------
@@ -201,6 +211,20 @@ $router->add('POST', "{$prefix}/auth/logout",     fn() => $auth->logout());
 $router->add('GET',  "{$prefix}/me",              fn() => $auth->me());
 $router->add('POST', "{$prefix}/auth/refresh",    fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
+
+// Google OAuth
+$router->add('GET', "{$prefix}/auth/google/start",    fn() => $auth->googleStart());
+$router->add('GET', "{$prefix}/auth/google/callback", fn() => $auth->googleCallback());
+
+// Magic link
+$router->add('POST', "{$prefix}/auth/magic-link/request", function () use ($auth) {
+    RateLimiter::check('auth:magic:' . RateLimiter::ip(), 5, 300);
+    $auth->magicLinkRequest();
+});
+$router->add('GET', "{$prefix}/auth/magic-link/verify", fn() => $auth->magicLinkVerify());
+
+// Onboarding
+$router->add('POST', "{$prefix}/auth/onboarding", fn() => $auth->saveOnboarding());
 
 // Email verification
 $router->add('GET',  "{$prefix}/auth/verify-email", fn() => $auth->verifyEmail());
@@ -284,15 +308,23 @@ $router->add('POST',   "{$prefix}/books/{id}/chapters",             fn($p) => $c
 $router->add('PATCH',  "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->update($p));
 $router->add('DELETE', "{$prefix}/books/{id}/chapters/{chapterId}", fn($p) => $chapters->destroy($p));
 
+// Blocks (which blocks are active per user-book)
+$router->add('GET',    "{$prefix}/books/{id}/blocks",        fn($p) => $blocks->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/blocks",        fn($p) => $blocks->store($p));
+$router->add('DELETE', "{$prefix}/books/{id}/blocks/{type}", fn($p) => $blocks->destroy($p));
+
+// Analysis (rich-text block)
+$router->add('GET', "{$prefix}/books/{id}/analysis", fn($p) => $analysis->show($p));
+$router->add('PUT', "{$prefix}/books/{id}/analysis", fn($p) => $analysis->upsert($p));
+
+// Characters (structured block)
+$router->add('GET',    "{$prefix}/books/{id}/characters",           fn($p) => $characters->index($p));
+$router->add('POST',   "{$prefix}/books/{id}/characters",           fn($p) => $characters->store($p));
+$router->add('PATCH',  "{$prefix}/books/{id}/characters/{charId}",  fn($p) => $characters->update($p));
+$router->add('DELETE', "{$prefix}/books/{id}/characters/{charId}",  fn($p) => $characters->destroy($p));
+
 // Quests
 $router->add('GET', "{$prefix}/quests/summary", fn() => $quests->summary());
-
-// Cards
-$router->add('GET',  "{$prefix}/cards", fn() => $cards->index());
-$router->add('POST', "{$prefix}/cards/{id:\d+}/claim", function () use ($cards) {
-    RateLimiter::check('card:claim:' . RateLimiter::ip(), 30, 60);
-    $cards->claim(func_get_arg(0));
-});
 
 // Reading
 $router->add('GET',   "{$prefix}/reading/goal",      fn() => $reading->getGoal());
@@ -301,22 +333,33 @@ $router->add('GET',   "{$prefix}/reading/log",       fn() => $reading->getLog())
 $router->add('PATCH', "{$prefix}/reading/log/today", fn() => $reading->upsertToday());
 
 // Learn
-$router->add('GET',  "{$prefix}/learn/books", fn() => $learn->books());
-$router->add('GET',  "{$prefix}/learn/deck",  fn() => $learn->deck());
+$router->add('GET',  "{$prefix}/learn/books",            fn() => $learn->books());
+$router->add('GET',  "{$prefix}/learn/stats",            fn() => $learn->stats());
+$router->add('GET',  "{$prefix}/learn/deck",             fn() => $learn->deck());
+$router->add('GET',  "{$prefix}/learn/quiz",             fn() => $learn->quiz());
+$router->add('POST', "{$prefix}/learn/progress",         fn() => $learn->updateProgress());
 $router->add('POST', "{$prefix}/learn/session/complete", function () use ($learn) {
     RateLimiter::check('learn:session:' . RateLimiter::ip(), 20, 60);
     $learn->completeSession();
 });
 
-// Quiz
-$router->add('GET',  "{$prefix}/quiz/categories",               fn() => $quiz->categories());
-$router->add('GET',  "{$prefix}/quiz/packs",                    fn() => $quiz->packs());
-$router->add('GET',  "{$prefix}/quiz/packs/{id:\d+}",           fn($p) => $quiz->packShow($p));
-$router->add('GET',  "{$prefix}/quiz/quizzes/{id:\d+}",         fn($p) => $quiz->quizShow($p));
-$router->add('POST', "{$prefix}/quiz/quizzes/{id:\d+}/attempt", function () use ($quiz) {
-    RateLimiter::check('quiz:attempt:' . RateLimiter::ip(), 20, 60);
-    $quiz->submit(func_get_arg(0));
+// Stats
+$router->add('GET', "{$prefix}/stats",    fn() => $statsCtrl->index());
+$router->add('GET', "{$prefix}/activity", fn() => $activityCtrl->index());
+
+// Recommendations
+$router->add('GET', "{$prefix}/recommendations", fn() => $recommendations->index());
+
+// Explorer
+$router->add('GET', "{$prefix}/explore", fn() => $exploreCtrl->sections());
+$router->add('GET', "{$prefix}/explore/search", function () use ($exploreCtrl) {
+    RateLimiter::check('book:search:' . RateLimiter::ip(), 30, 60);
+    $exploreCtrl->search();
 });
+
+// Challenges
+$router->add('GET', "{$prefix}/challenges",      fn() => $challenges->index());
+$router->add('GET', "{$prefix}/challenges/page", fn() => $challenges->page());
 
 // Dictionary
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());

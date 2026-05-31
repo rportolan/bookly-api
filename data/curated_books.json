@@ -1,0 +1,475 @@
+{
+  "version": "2.0",
+  "generated": "2026-05-15",
+  "note": "ISBN13 = édition de référence. ISBNDB fournit cover + pages + titre officiel. Description = toujours en français (curation éditoriale).",
+  "sections": [
+    {
+      "id": "must-read",
+      "title": "À lire au moins une fois",
+      "books": [
+        {
+          "isbn13": "9782070360024",
+          "title": "L'Étranger",
+          "author": "Albert Camus",
+          "description": "Meursault tue un homme sous le soleil d'Alger. Un roman sur l'absurde qui a changé la littérature."
+        },
+        {
+          "isbn13": "9782070408504",
+          "title": "Le Petit Prince",
+          "author": "Antoine de Saint-Exupéry",
+          "description": "On ne voit bien qu'avec le cœur. Le livre le plus traduit au monde après la Bible."
+        },
+        {
+          "isbn13": "9780451524935",
+          "title": "1984",
+          "author": "George Orwell",
+          "description": "Big Brother vous surveille. Le roman dystopique qui redéfinit notre rapport au pouvoir."
+        },
+        {
+          "isbn13": "9782070500406",
+          "title": "Les Misérables",
+          "author": "Victor Hugo",
+          "description": "Jean Valjean, Cosette, l'inspecteur Javert. La fresque humaine la plus ample de la littérature française."
+        },
+        {
+          "isbn13": "9782072788819",
+          "title": "Germinal",
+          "author": "Émile Zola",
+          "description": "Les mineurs du Nord en grève. Zola à son sommet — un roman qui fait encore trembler."
+        },
+        {
+          "isbn13": "9782070413119",
+          "title": "Madame Bovary",
+          "author": "Gustave Flaubert",
+          "description": "Emma rêve d'une autre vie. Le roman du désir inassouvi, et le procès le plus célèbre de l'histoire littéraire."
+        },
+        {
+          "isbn13": "9782070400942",
+          "title": "Le Père Goriot",
+          "author": "Honoré de Balzac",
+          "description": "Rastignac arrive à Paris et découvre l'ambition, la misère et la trahison. Balzac dans toute sa puissance."
+        },
+        {
+          "isbn13": "9782070413348",
+          "title": "Bel-Ami",
+          "author": "Guy de Maupassant",
+          "description": "Georges Duroy grimpe dans la société parisienne grâce aux femmes. Acéré et moderne."
+        },
+        {
+          "isbn13": "9782070360048",
+          "title": "La Peste",
+          "author": "Albert Camus",
+          "description": "Une épidémie s'abat sur Oran. Camus interroge la solidarité humaine face à l'absurde collectif."
+        },
+        {
+          "isbn13": "9782070417865",
+          "title": "Candide",
+          "author": "Voltaire",
+          "description": "Il faut cultiver notre jardin. La satire la plus féroce et la plus drôle du Siècle des Lumières."
+        },
+        {
+          "isbn13": "9780060850524",
+          "title": "Le Meilleur des mondes",
+          "author": "Aldous Huxley",
+          "description": "Un monde où le bonheur est obligatoire. La dystopie qui prédit le mieux notre époque actuelle."
+        },
+        {
+          "isbn13": "9780141439518",
+          "title": "Orgueil et Préjugés",
+          "author": "Jane Austen",
+          "description": "Elizabeth Bennet et Mr Darcy. Le roman romantique qui a tout inventé — toujours aussi vivant."
+        }
+      ]
+    },
+    {
+      "id": "emotional",
+      "title": "Envie de pleurer ?",
+      "books": [
+        {
+          "isbn13": "9781400078776",
+          "title": "Never Let Me Go",
+          "author": "Kazuo Ishiguro",
+          "description": "Trois amis grandissent dans une école secrète. Ce qui les attend est insupportable et magnifique."
+        },
+        {
+          "isbn13": "9780804172707",
+          "title": "A Little Life",
+          "author": "Hanya Yanagihara",
+          "description": "Quatre amis à New York. L'histoire de Jude est la plus dévastatrice jamais mise en mots."
+        },
+        {
+          "isbn13": "9781594631931",
+          "title": "Les Cerfs-volants de Kaboul",
+          "author": "Khaled Hosseini",
+          "description": "Amir et Hassan dans l'Afghanistan des années 70. Une amitié trahie qui hante toute une vie."
+        },
+        {
+          "isbn13": "9781594483073",
+          "title": "Mille soleils splendides",
+          "author": "Khaled Hosseini",
+          "description": "Deux femmes afghanes liées par le destin sur trente ans. Encore plus déchirant que Les Cerfs-volants."
+        },
+        {
+          "isbn13": "9780375831003",
+          "title": "La Voleuse de livres",
+          "author": "Markus Zusak",
+          "description": "Liesel vole des livres dans l'Allemagne nazie. La mort elle-même raconte son histoire."
+        },
+        {
+          "isbn13": "9780525478812",
+          "title": "Nos étoiles contraires",
+          "author": "John Green",
+          "description": "Hazel et Gus se rencontrent dans un groupe de soutien pour malades du cancer. L'amour à l'état pur."
+        },
+        {
+          "isbn13": "9780143124542",
+          "title": "Avant toi",
+          "author": "Jojo Moyes",
+          "description": "Louisa prend soin de Will, tétraplégique. Deux visions de la vie radicalement opposées."
+        },
+        {
+          "isbn13": "9780307387899",
+          "title": "La Route",
+          "author": "Cormac McCarthy",
+          "description": "Un père et son fils traversent une Amérique dévastée. L'amour parental à l'état brut."
+        },
+        {
+          "isbn13": "9780140177398",
+          "title": "Des souris et des hommes",
+          "author": "John Steinbeck",
+          "description": "George et Lennie rêvent d'une vie meilleure. Steinbeck en 120 pages qui brisent le cœur."
+        },
+        {
+          "isbn13": "9782070145379",
+          "title": "Charlotte",
+          "author": "David Foenkinos",
+          "description": "La vie de Charlotte Salomon, peintre juive morte à Auschwitz. Un roman qui coupe le souffle."
+        },
+        {
+          "isbn13": "9782246857587",
+          "title": "La Vérité sur l'affaire Harry Quebert",
+          "author": "Joël Dicker",
+          "description": "Un écrivain enquête sur son mentor accusé de meurtre. Le thriller français qui a tout changé."
+        },
+        {
+          "isbn13": "9780316666343",
+          "title": "Lovely Bones",
+          "author": "Alice Sebold",
+          "description": "Susie Salmon raconte son histoire depuis le paradis, après son assassinat à 14 ans."
+        }
+      ]
+    },
+    {
+      "id": "learn",
+      "title": "Envie d'apprendre ?",
+      "books": [
+        {
+          "isbn13": "9780062316097",
+          "title": "Sapiens",
+          "author": "Yuval Noah Harari",
+          "description": "L'histoire complète de l'humanité en 400 pages. Le livre de non-fiction le plus influent de la décennie."
+        },
+        {
+          "isbn13": "9780374533557",
+          "title": "Thinking, Fast and Slow",
+          "author": "Daniel Kahneman",
+          "description": "Nos deux systèmes de pensée décryptés par un Prix Nobel. Change ta façon de décider."
+        },
+        {
+          "isbn13": "9780316017930",
+          "title": "Outliers",
+          "author": "Malcolm Gladwell",
+          "description": "Pourquoi certains réussissent et pas d'autres ? La règle des 10 000 heures et le rôle du contexte."
+        },
+        {
+          "isbn13": "9780735211292",
+          "title": "Atomic Habits",
+          "author": "James Clear",
+          "description": "Les habitudes minuscules qui changent tout. Le livre de productivité le plus actionnable jamais écrit."
+        },
+        {
+          "isbn13": "9780062464316",
+          "title": "Homo Deus",
+          "author": "Yuval Noah Harari",
+          "description": "Où va l'humanité ? IA, immortalité, algorithmes. La suite de Sapiens, encore plus troublante."
+        },
+        {
+          "isbn13": "9780807014295",
+          "title": "Découvrir un sens à sa vie",
+          "author": "Viktor Frankl",
+          "description": "Survivant d'Auschwitz, Frankl explique comment trouver un sens même dans la souffrance absolue."
+        },
+        {
+          "isbn13": "9780812973815",
+          "title": "Le Cygne Noir",
+          "author": "Nassim Taleb",
+          "description": "Les événements improbables qui changent tout. Réinvente notre rapport au hasard et à l'incertitude."
+        },
+        {
+          "isbn13": "9780061241895",
+          "title": "Influence",
+          "author": "Robert Cialdini",
+          "description": "Les 6 principes de persuasion qui gouvernent nos décisions. Le livre de psychologie sociale incontournable."
+        },
+        {
+          "isbn13": "9780062457714",
+          "title": "L'Art subtil de s'en foutre",
+          "author": "Mark Manson",
+          "description": "Un guide à contre-courant pour vivre une bonne vie. Cynique, drôle, et étonnamment sage."
+        },
+        {
+          "isbn13": "9781577314806",
+          "title": "Le Pouvoir du moment présent",
+          "author": "Eckhart Tolle",
+          "description": "Comment sortir du mental pour vivre pleinement l'instant. Le livre de spiritualité contemporaine."
+        },
+        {
+          "isbn13": "9780671027032",
+          "title": "Comment se faire des amis",
+          "author": "Dale Carnegie",
+          "description": "Écrit en 1936, toujours aussi pertinent. Les bases des relations humaines, immuables."
+        },
+        {
+          "isbn13": "9780385737951",
+          "title": "Quiet",
+          "author": "Susan Cain",
+          "description": "Le pouvoir des introvertis dans un monde qui ne cesse de parler. Un livre qui change le regard sur soi."
+        }
+      ]
+    },
+    {
+      "id": "adventure",
+      "title": "Envie d'aventure ?",
+      "books": [
+        {
+          "isbn13": "9780140449266",
+          "title": "Le Comte de Monte-Cristo",
+          "author": "Alexandre Dumas",
+          "description": "Edmond Dantès, trahi et emprisonné, prépare une vengeance magistrale. L'aventure ultime."
+        },
+        {
+          "isbn13": "9780553213874",
+          "title": "20 000 lieues sous les mers",
+          "author": "Jules Verne",
+          "description": "À bord du Nautilus avec le mystérieux capitaine Nemo. Jules Verne invente la science-fiction."
+        },
+        {
+          "isbn13": "9780385486804",
+          "title": "Into the Wild",
+          "author": "Jon Krakauer",
+          "description": "Chris McCandless abandonne tout pour l'Alaska sauvage. Une histoire vraie fascinante et tragique."
+        },
+        {
+          "isbn13": "9780062315007",
+          "title": "L'Alchimiste",
+          "author": "Paulo Coelho",
+          "description": "Santiago traverse le désert à la recherche d'un trésor. Le roman de la quête de soi."
+        },
+        {
+          "isbn13": "9780156027328",
+          "title": "L'Histoire de Pi",
+          "author": "Yann Martel",
+          "description": "Un adolescent naufragé sur un canot de sauvetage avec un tigre du Bengale. Prix Booker."
+        },
+        {
+          "isbn13": "9780307476074",
+          "title": "Wild",
+          "author": "Cheryl Strayed",
+          "description": "1 100 miles à pied seule sur le Pacific Crest Trail. Une femme qui se reconstruit pas à pas."
+        },
+        {
+          "isbn13": "9780312330538",
+          "title": "Shantaram",
+          "author": "Gregory David Roberts",
+          "description": "Un évadé australien se réfugie à Bombay. 900 pages d'aventure pure, inspiré d'une histoire vraie."
+        },
+        {
+          "isbn13": "9780618640157",
+          "title": "Le Seigneur des anneaux",
+          "author": "J.R.R. Tolkien",
+          "description": "Frodon doit détruire l'Anneau Unique. La fantasy épique qui a tout créé."
+        },
+        {
+          "isbn13": "9780143034902",
+          "title": "L'Ombre du vent",
+          "author": "Carlos Ruiz Zafón",
+          "description": "Barcelone, 1945. Un jeune garçon découvre un livre et une obsession. Un page-turner parfait."
+        },
+        {
+          "isbn13": "9780345391803",
+          "title": "Le Guide du voyageur galactique",
+          "author": "Douglas Adams",
+          "description": "La Terre est démolie pour une voie express. La réponse est 42. Culte et inclassable."
+        },
+        {
+          "isbn13": "9780141321004",
+          "title": "L'Île au trésor",
+          "author": "Robert Louis Stevenson",
+          "description": "Jim Hawkins, Long John Silver, la carte au trésor. L'aventure fondatrice de la littérature jeunesse."
+        },
+        {
+          "isbn13": "9780486268682",
+          "title": "Croc-Blanc",
+          "author": "Jack London",
+          "description": "Un loup-chien dans le Grand Nord canadien. London comme personne n'a écrit la nature sauvage."
+        }
+      ]
+    },
+    {
+      "id": "cult-2000s",
+      "title": "Romans cultes des années 2000",
+      "books": [
+        {
+          "isbn13": "9780307474278",
+          "title": "Da Vinci Code",
+          "author": "Dan Brown",
+          "description": "Un meurtre au Louvre, des symboles secrets, une chasse au trésor mondiale. 80 millions d'exemplaires."
+        },
+        {
+          "isbn13": "9780307454546",
+          "title": "Millénium — Les Hommes qui n'aimaient pas les femmes",
+          "author": "Stieg Larsson",
+          "description": "Lisbeth Salander, hackeuse iconique. La série policière qui a redéfini le genre."
+        },
+        {
+          "isbn13": "9780375704024",
+          "title": "Norwegian Wood",
+          "author": "Haruki Murakami",
+          "description": "Un étudiant hanté par la mort de ses amis dans le Tokyo des années 60. Murakami au plus intime."
+        },
+        {
+          "isbn13": "9780307588364",
+          "title": "Gone Girl",
+          "author": "Gillian Flynn",
+          "description": "Amy disparaît le jour de leur anniversaire de mariage. Retournement final culte."
+        },
+        {
+          "isbn13": "9780439023481",
+          "title": "Hunger Games",
+          "author": "Suzanne Collins",
+          "description": "Katniss Everdeen, 24 tributs, un seul survivant. La dystopie YA qui a tout déclenché."
+        },
+        {
+          "isbn13": "9780380789030",
+          "title": "American Gods",
+          "author": "Neil Gaiman",
+          "description": "Les anciens dieux contre les nouveaux (Internet, télévision) dans l'Amérique contemporaine."
+        },
+        {
+          "isbn13": "9780670034161",
+          "title": "Mange Prie Aime",
+          "author": "Elizabeth Gilbert",
+          "description": "Après un divorce, une année en Italie, Inde et Bali. A lancé une génération de voyageurs."
+        },
+        {
+          "isbn13": "9780439708180",
+          "title": "Harry Potter à l'école des sorciers",
+          "author": "J.K. Rowling",
+          "description": "Le sorcier le plus célèbre du monde. Une génération entière a grandi avec Harry, Ron et Hermione."
+        },
+        {
+          "isbn13": "9781400079278",
+          "title": "Kafka sur le rivage",
+          "author": "Haruki Murakami",
+          "description": "Deux histoires parallèles dans le Japon contemporain. Murakami à son sommet créatif."
+        },
+        {
+          "isbn13": "9781469204734",
+          "title": "Perks of Being a Wallflower",
+          "author": "Stephen Chbosky",
+          "description": "Charlie, ses lettres à un inconnu, Noël 1991. Roman générationnel sur la différence et l'adolescence."
+        },
+        {
+          "isbn13": "9782246857587",
+          "title": "La Vérité sur l'affaire Harry Quebert",
+          "author": "Joël Dicker",
+          "description": "Un écrivain enquête sur son mentor accusé de meurtre. Le phénomène éditorial français des années 2010."
+        },
+        {
+          "isbn13": "9782070466276",
+          "title": "Marc et Lydie",
+          "author": "Guillaume Musso",
+          "description": "Deux destins entrelacés sur vingt ans. Musso à son plus romanesque — impossible à lâcher."
+        }
+      ]
+    },
+    {
+      "id": "think-different",
+      "title": "Pour voir les choses autrement",
+      "books": [
+        {
+          "isbn13": "9780140449334",
+          "title": "Pensées pour moi-même",
+          "author": "Marc Aurèle",
+          "description": "Le journal intime d'un empereur romain. Le stoïcisme à l'état pur, écrit il y a 2 000 ans."
+        },
+        {
+          "isbn13": "9780679733737",
+          "title": "Le Mythe de Sisyphe",
+          "author": "Albert Camus",
+          "description": "Il faut imaginer Sisyphe heureux. Comment vivre dans un monde absurde. Camus au sommet."
+        },
+        {
+          "isbn13": "9780807014295",
+          "title": "Découvrir un sens à sa vie",
+          "author": "Viktor Frankl",
+          "description": "La logothérapie née dans les camps. Trouver un pourquoi pour supporter n'importe quel comment."
+        },
+        {
+          "isbn13": "9780060916473",
+          "title": "L'Art d'aimer",
+          "author": "Erich Fromm",
+          "description": "L'amour n'est pas un sentiment — c'est une pratique. Redéfinit complètement ce qu'est aimer."
+        },
+        {
+          "isbn13": "9780062457714",
+          "title": "L'Art subtil de s'en foutre",
+          "author": "Mark Manson",
+          "description": "Un guide à contre-courant pour vivre une bonne vie. Cynique, drôle, étonnamment sage."
+        },
+        {
+          "isbn13": "9780691096124",
+          "title": "Walden",
+          "author": "Henry David Thoreau",
+          "description": "Deux ans seul dans les bois. La réflexion fondatrice sur la simplicité volontaire."
+        },
+        {
+          "isbn13": "9780345816023",
+          "title": "12 règles pour une vie",
+          "author": "Jordan Peterson",
+          "description": "Nettoie ta chambre. Affronte le chaos. Une philosophie de vie directe et sans concession."
+        },
+        {
+          "isbn13": "9780061339202",
+          "title": "Flow",
+          "author": "Mihaly Csikszentmihalyi",
+          "description": "L'état optimal d'absorption totale dans une activité. La psychologie du bonheur par l'engagement."
+        },
+        {
+          "isbn13": "9780374528379",
+          "title": "Les Frères Karamazov",
+          "author": "Fiodor Dostoïevski",
+          "description": "Dieu existe-t-il ? L'homme est-il libre ? Dostoïevski pose les questions ultimes en 900 pages."
+        },
+        {
+          "isbn13": "9780140441185",
+          "title": "Ainsi parlait Zarathoustra",
+          "author": "Friedrich Nietzsche",
+          "description": "Dieu est mort. L'Übermensch. Nietzsche à son plus ambitieux — difficile, mais transformateur."
+        },
+        {
+          "isbn13": "9780143035008",
+          "title": "Anna Karénine",
+          "author": "Léon Tolstoï",
+          "description": "Tolstoï disait lui-même que c'était son meilleur roman. L'amour, la société, la mort."
+        },
+        {
+          "isbn13": "9780486415871",
+          "title": "Crime et Châtiment",
+          "author": "Fiodor Dostoïevski",
+          "description": "Un étudiant convaincu d'être supérieur commet un meurtre. La plongée la plus profonde dans la culpabilité."
+        }
+      ]
+    }
+  ]
+}

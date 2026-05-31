@@ -10,7 +10,7 @@ final class VocabRepository
         $pdo = Db::pdo();
 
         $stmt = $pdo->prepare("
-            SELECT v.id, v.word, v.definition, v.created_at
+            SELECT v.id, v.word, v.definition, v.word_type, v.gender, v.created_at
             FROM vocab v
             JOIN user_books ub ON ub.id = v.user_book_id
             WHERE ub.id = :user_book_id
@@ -20,20 +20,19 @@ final class VocabRepository
 
         $stmt->execute([
             'user_book_id' => $userBookId,
-            'user_id' => $userId,
+            'user_id'      => $userId,
         ]);
 
         return $stmt->fetchAll();
     }
 
-    public function create(int $userId, int $userBookId, string $word, string $definition): array
+    public function create(int $userId, int $userBookId, string $word, string $definition, ?string $wordType, ?string $gender): array
     {
         $pdo = Db::pdo();
 
-        // Insère seulement si le user possède ce user_book
         $stmt = $pdo->prepare("
-            INSERT INTO vocab (user_book_id, word, definition)
-            SELECT ub.id, :word, :definition
+            INSERT INTO vocab (user_book_id, word, definition, word_type, gender)
+            SELECT ub.id, :word, :definition, :word_type, :gender
             FROM user_books ub
             WHERE ub.id = :user_book_id
               AND ub.user_id = :user_id
@@ -42,9 +41,11 @@ final class VocabRepository
 
         $stmt->execute([
             'user_book_id' => $userBookId,
-            'user_id' => $userId,
-            'word' => $word,
-            'definition' => $definition,
+            'user_id'      => $userId,
+            'word'         => $word,
+            'definition'   => $definition,
+            'word_type'    => $wordType,
+            'gender'       => $gender,
         ]);
 
         if ($stmt->rowCount() === 0) {
@@ -53,7 +54,7 @@ final class VocabRepository
 
         $id = (int)$pdo->lastInsertId();
 
-        $stmt = $pdo->prepare("SELECT id, word, definition, created_at FROM vocab WHERE id = :id LIMIT 1");
+        $stmt = $pdo->prepare("SELECT id, word, definition, word_type, gender, created_at FROM vocab WHERE id = :id LIMIT 1");
         $stmt->execute(['id' => $id]);
 
         return $stmt->fetch();
@@ -73,9 +74,9 @@ final class VocabRepository
         ");
 
         $stmt->execute([
-            'vocab_id' => $vocabId,
+            'vocab_id'     => $vocabId,
             'user_book_id' => $userBookId,
-            'user_id' => $userId,
+            'user_id'      => $userId,
         ]);
 
         return $stmt->rowCount() > 0;
@@ -85,7 +86,6 @@ final class VocabRepository
     {
         $pdo = Db::pdo();
 
-        // Ownership + vocab belongs to this user_book
         $stmt = $pdo->prepare("
             SELECT v.id
             FROM vocab v
@@ -97,9 +97,9 @@ final class VocabRepository
         ");
 
         $stmt->execute([
-            'vocab_id' => $vocabId,
+            'vocab_id'     => $vocabId,
             'user_book_id' => $userBookId,
-            'user_id' => $userId,
+            'user_id'      => $userId,
         ]);
 
         if (!$stmt->fetch()) return null;
@@ -107,7 +107,7 @@ final class VocabRepository
         $fields = [];
         $params = ['vocab_id' => $vocabId];
 
-        foreach (['word', 'definition'] as $k) {
+        foreach (['word', 'definition', 'word_type', 'gender'] as $k) {
             if (array_key_exists($k, $patch)) {
                 $fields[] = "v.$k = :$k";
                 $params[$k] = $patch[$k];
@@ -120,10 +120,9 @@ final class VocabRepository
             $upd->execute($params);
         }
 
-        $stmt = $pdo->prepare("SELECT id, word, definition, created_at FROM vocab WHERE id = :id LIMIT 1");
+        $stmt = $pdo->prepare("SELECT id, word, definition, word_type, gender, created_at FROM vocab WHERE id = :id LIMIT 1");
         $stmt->execute(['id' => $vocabId]);
 
         return $stmt->fetch() ?: null;
     }
-
 }

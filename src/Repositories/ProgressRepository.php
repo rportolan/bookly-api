@@ -63,4 +63,21 @@ final class ProgressRepository
 
         return (bool)$stmt->fetchColumn();
     }
+
+    /**
+     * Check whether an xp event of the given type was already recorded today.
+     * Uses DATE(created_at) — no JSON parsing needed.
+     */
+    public function hasEventToday(int $userId, string $type): bool
+    {
+        $stmt = Db::pdo()->prepare("
+            SELECT 1 FROM xp_events
+            WHERE user_id = :uid
+              AND type    = :type
+              AND DATE(created_at) = CURDATE()
+            LIMIT 1
+        ");
+        $stmt->execute(['uid' => $userId, 'type' => $type]);
+        return (bool)$stmt->fetchColumn();
+    }
 }

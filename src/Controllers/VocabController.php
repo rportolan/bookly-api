@@ -36,9 +36,11 @@ final class VocabController
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'id'], 'Invalid book id');
         }
 
-        $body = Request::json();
-        $word = trim((string)($body['word'] ?? ''));
+        $body       = Request::json();
+        $word       = trim((string)($body['word'] ?? ''));
         $definition = trim((string)($body['definition'] ?? ''));
+        $wordType   = isset($body['wordType']) ? trim((string)$body['wordType']) : null;
+        $gender     = isset($body['gender'])   ? trim((string)$body['gender'])   : null;
 
         if ($word === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'word'], 'word is required');
@@ -47,10 +49,13 @@ final class VocabController
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'definition'], 'definition is required');
         }
 
+        $wordType = ($wordType === '') ? null : $wordType;
+        $gender   = ($gender   === '') ? null : $gender;
+
         $repo = new VocabRepository();
 
         try {
-            $row = $repo->create($userId, $userBookId, $word, $definition);
+            $row = $repo->create($userId, $userBookId, $word, $definition, $wordType, $gender);
         } catch (\PDOException $e) {
             if ((int)($e->errorInfo[1] ?? 0) === 1062) {
                 throw new HttpException(409, 'CONFLICT', [
@@ -118,10 +123,17 @@ final class VocabController
                 throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'definition'], 'definition cannot be empty');
             }
         }
-
+        if (array_key_exists('wordType', $body)) {
+            $v = trim((string)$body['wordType']);
+            $patch['word_type'] = $v === '' ? null : $v;
+        }
+        if (array_key_exists('gender', $body)) {
+            $v = trim((string)$body['gender']);
+            $patch['gender'] = $v === '' ? null : $v;
+        }
         if (!$patch) {
             throw new HttpException(422, 'VALIDATION_ERROR', [
-                'allowed' => ['word', 'definition'],
+                'allowed' => ['word', 'definition', 'wordType', 'gender'],
             ], 'No fields to update');
         }
 
@@ -200,10 +212,12 @@ final class VocabController
     private function mapRow(array $r): array
     {
         return [
-            'id' => (int)($r['id'] ?? 0),
-            'word' => (string)($r['word'] ?? ''),
+            'id'         => (int)($r['id'] ?? 0),
+            'word'       => (string)($r['word'] ?? ''),
             'definition' => (string)($r['definition'] ?? ''),
-            'createdAt' => $r['created_at'] ?? null,
+            'wordType'   => isset($r['word_type']) ? (string)$r['word_type'] : null,
+            'gender'     => isset($r['gender'])    ? (string)$r['gender']    : null,
+            'createdAt'  => $r['created_at'] ?? null,
         ];
     }
 }

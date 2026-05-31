@@ -7,6 +7,7 @@ use App\Core\Auth;
 use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
+use App\Repositories\ActivityRepository;
 use App\Repositories\BookRepository;
 use App\Repositories\ProgressRepository;
 use App\Services\ProgressService;
@@ -155,11 +156,25 @@ final class BooksController
             throw new HttpException(422, 'VALIDATION_ERROR', ['field' => 'id'], 'Invalid id');
         }
 
+        $actRepo = new ActivityRepository();
+
+        // Collect days with reading sessions BEFORE deletion (CASCADE will remove them)
+        $affectedDays = $actRepo->getDaysWithSessions($userId, $id);
+
         $repo = new BookRepository();
-        $ok = $repo->deleteForUser($userId, $id);
+        $ok   = $repo->deleteForUser($userId, $id);
 
         if (!$ok) {
             throw new HttpException(404, 'NOT_FOUND', ['id' => $id], 'Not Found');
+        }
+
+        // Recompute reading_logs for days that included this book's pages
+        if (!empty($affectedDays)) {
+            try {
+                $actRepo->recomputeLogsForDays($userId, $affectedDays);
+            } catch (\Throwable $e) {
+                error_log('[BOOKLY][activity] recomputeLogsForDays failed: ' . $e->getMessage());
+            }
         }
 
         Response::ok(['deleted' => true]);
@@ -218,6 +233,18 @@ final class BooksController
             throw new HttpException(404, 'NOT_FOUND', ['id' => $userBookId], 'Not Found');
         }
 
+        // Absolute progress before and after (used for session logging and daily-goal check)
+        $oldPages = (int)($before['progress_pages'] ?? 0);
+        $newPages = (int)($updated['progress_pages'] ?? 0);
+        $delta    = $newPages - $oldPages; // kept for daily-goal guard only
+
+        // Log reading session (absolute tracking — handles increases AND corrections)
+        try {
+            (new ActivityRepository())->logSession($userId, $userBookId, $oldPages, $newPages);
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][activity] logSession failed: ' . $e->getMessage());
+        }
+
         try {
             $beforeStatus = (string)($before['status'] ?? '');
             $afterStatus = (string)($updated['status'] ?? '');
@@ -240,13 +267,70 @@ final class BooksController
             $afterProgress = $progressService->snapshot($userId);
         }
 
+        // Check whether the daily reading goal was just reached
+        $rewardedDailyGoal  = false;
+        $dailyGoalStreakDays = 1;
+        $dailyGoalPages     = 0;
+        $dailyGoalPpd       = 0;
+        $dailyGoalDay       = '';
+        $dailyGoalXp        = 0;
+
+        try {
+            if ($delta > 0) {
+                $actRepo   = new ActivityRepository();
+                $today     = (new \DateTimeImmutable('today'))->format('Y-m-d');
+                $goal      = $actRepo->getUserGoal($userId);
+                $todayRead = $actRepo->getDailyPages($userId, $today);
+
+                if ($goal > 0 && $todayRead >= $goal) {
+                    $pr            = new ProgressRepository();
+                    $alreadyGiven  = $pr->hasEventToday($userId, 'DAILY_GOAL_COMPLETED');
+
+                    if (!$alreadyGiven) {
+                        $streakDays = $actRepo->computeStreak($userId, $goal);
+
+                        // Award daily-goal XP
+                        $dg = $progressService->award($userId, 'DAILY_GOAL_COMPLETED', 0, ['day' => $today]);
+                        $dailyGoalXp += (int)($dg['awardedXp'] ?? 0);
+                        $afterProgress = $dg;
+
+                        // Award streak XP (every consecutive day after the first)
+                        if ($streakDays >= 2) {
+                            $sk = $progressService->award($userId, 'STREAK_DAY', 0, [
+                                'day'        => $today,
+                                'streakDays' => $streakDays,
+                            ]);
+                            $dailyGoalXp  += (int)($sk['awardedXp'] ?? 0);
+                            $afterProgress = $sk;
+                        }
+
+                        $rewardedDailyGoal  = true;
+                        $dailyGoalStreakDays = $streakDays;
+                        $dailyGoalPages     = $todayRead;
+                        $dailyGoalPpd       = $goal;
+                        $dailyGoalDay       = $today;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[BOOKLY][daily_goal] ' . $e->getMessage());
+        }
+
         Response::ok([
             ...$this->mapRow($updated),
-            'progress' => $this->onlyProgressSnapshot($afterProgress),
-            'levelUp' => $afterProgress['levelUp'] ?? $this->emptyLevelUp(),
-            'cardUnlock' => $afterProgress['cardUnlock'] ?? $this->emptyCardUnlock(),
-            'awardedXp' => (int)($afterProgress['awardedXp'] ?? 0),
-            'awardType' => (string)($afterProgress['awardType'] ?? 'BOOK_DONE'),
+            'progress'           => $this->onlyProgressSnapshot($afterProgress),
+            'levelUp'            => $afterProgress['levelUp'] ?? $this->emptyLevelUp(),
+            'cardUnlock'         => $afterProgress['cardUnlock'] ?? $this->emptyCardUnlock(),
+            'awardedXp'          => (int)($afterProgress['awardedXp'] ?? 0),
+            'awardType'          => (string)($afterProgress['awardType'] ?? 'PROGRESS'),
+            // Daily-goal reward fields (consumed by the mobile app)
+            'rewardedDailyGoal'  => $rewardedDailyGoal,
+            'streakDays'         => $dailyGoalStreakDays,
+            'goalPagesPerDay'    => $dailyGoalPpd,
+            'entry'              => $rewardedDailyGoal
+                                        ? ['date' => $dailyGoalDay, 'pages' => $dailyGoalPages]
+                                        : null,
+            'dailyGoalAwardedXp' => $dailyGoalXp,
         ]);
     }
 

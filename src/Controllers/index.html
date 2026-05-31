@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bookly — Lis. Retiens. Progresse.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #F7F5F0;
+      --card:         #EDEAE3;
+      --dark:         #1C1A17;
+      --muted:        rgba(28,26,23,0.48);
+      --border:       rgba(28,26,23,0.09);
+      --primary:      #5927E0;
+      --primary-soft: rgba(89,39,224,0.10);
+      --danger:       #C4202E;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Jost', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ──────────────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      padding: 18px 52px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(247,245,240,0.82);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      font-size: 22px; font-weight: 900; color: var(--dark);
+      letter-spacing: -0.5px; text-decoration: none;
+    }
+    .nav-logo span { color: var(--primary); }
+    .nav-links { display: flex; gap: 32px; align-items: center; }
+    .nav-link {
+      font-size: 14px; font-weight: 600; color: var(--muted);
+      text-decoration: none; transition: color .15s;
+    }
+    .nav-link:hover { color: var(--dark); }
+    .nav-cta {
+      font-size: 14px; font-weight: 800; color: #fff;
+      background: var(--primary); padding: 10px 22px;
+      border-radius: 999px; text-decoration: none;
+      transition: opacity .15s, transform .15s;
+      box-shadow: 0 4px 14px rgba(89,39,224,0.28);
+    }
+    .nav-cta:hover { opacity: .88; transform: translateY(-1px); }
+
+    /* ── HERO ──────────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      padding: 140px 52px 100px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 11px; font-weight: 800; color: var(--primary);
+      background: var(--primary-soft); padding: 6px 14px;
+      border-radius: 999px; margin-bottom: 28px;
+      letter-spacing: 1.2px; text-transform: uppercase;
+    }
+    .hero-title {
+      font-size: clamp(52px, 6.5vw, 88px);
+      font-weight: 900; line-height: .98;
+      letter-spacing: -3px; color: var(--dark);
+      margin-bottom: 26px;
+    }
+    .hero-title em { font-style: normal; color: var(--primary); }
+    .hero-sub {
+      font-size: 18px; font-weight: 500; color: var(--muted);
+      line-height: 1.65; max-width: 430px; margin-bottom: 44px;
+    }
+    .hero-btns { display: flex; gap: 12px; align-items: center; }
+    .btn-primary {
+      font-family: 'Jost', sans-serif;
+      font-size: 15px; font-weight: 800; color: #fff;
+      background: var(--primary); padding: 16px 32px;
+      border-radius: 999px; border: none; cursor: pointer;
+      text-decoration: none; display: inline-block;
+      transition: all .2s;
+      box-shadow: 0 8px 28px rgba(89,39,224,0.30);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(89,39,224,0.38); }
+    .btn-ghost {
+      font-family: 'Jost', sans-serif;
+      font-size: 15px; font-weight: 700; color: var(--muted);
+      text-decoration: none; padding: 16px 20px;
+      border-radius: 999px; transition: background .15s, color .15s;
+    }
+    .btn-ghost:hover { background: var(--card); color: var(--dark); }
+
+    /* hero right — phones */
+    .hero-right {
+      display: flex; justify-content: center; align-items: flex-end;
+      gap: 18px; position: relative;
+    }
+    .hero-glow {
+      position: absolute; width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(89,39,224,0.12) 0%, transparent 70%);
+      top: 50%; left: 50%; transform: translate(-50%,-50%);
+      pointer-events: none;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50%       { transform: translateY(-12px); }
+    }
+    .phone-float { animation: float 5s ease-in-out infinite; }
+    .phone-float-delay { animation: float 5s ease-in-out 1.2s infinite; }
+
+    /* ── PHONE COMPONENT ───────────────────────────────────── */
+    .phone {
+      background: #111;
+      border-radius: 44px;
+      padding: 10px;
+      box-shadow:
+        0 50px 120px rgba(28,26,23,0.28),
+        0 0 0 1px rgba(255,255,255,0.06) inset;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .phone-inner {
+      width: 100%; height: 100%;
+      border-radius: 36px;
+      overflow: hidden;
+      position: relative;
+    }
+    .phone-island {
+      position: absolute; top: 10px; left: 50%;
+      transform: translateX(-50%);
+      width: 76px; height: 22px;
+      background: #111; border-radius: 20px; z-index: 10;
+    }
+    .phone-screen {
+      width: 100%; height: 100%;
+      overflow: hidden; position: relative;
+    }
+    .screen-light { background: #F7F5F0; }
+    .screen-dark  { background: #151716; }
+
+    /* status bar */
+    .sb {
+      height: 44px; padding: 12px 20px 0;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sb-time { font-size: 12px; font-weight: 700; }
+    .sb-icons { display: flex; gap: 3px; align-items: center; }
+    .sb-icons b { width: 14px; height: 6px; border-radius: 1px; display: block; }
+    .light-text { color: #1C1A17; }
+    .light-text .sb-icons b { background: #1C1A17; opacity: .8; }
+    .dark-text  { color: #F7F5F0; }
+    .dark-text .sb-icons b  { background: #F7F5F0; opacity: .8; }
+
+    /* app padding */
+    .ap { padding: 10px 16px 16px; }
+
+    /* ── SCREEN ELEMENTS ──────────────────────────────────── */
+    .s-heading { font-size: 22px; font-weight: 900; letter-spacing: -.5px; }
+    .s-muted   { font-size: 11px; font-weight: 600; opacity: .45; }
+    .s-divider { height: 1px; margin: 10px 0; }
+    .s-div-light { background: rgba(28,26,23,0.08); }
+    .s-div-dark  { background: rgba(255,255,255,0.07); }
+
+    /* book row */
+    .brow {
+      display: flex; gap: 10px; align-items: center;
+      padding: 10px; border-radius: 14px; margin-bottom: 7px;
+    }
+    .brow-light { background: #EDEAE3; }
+    .brow-dark  { background: rgba(255,255,255,0.06); }
+    .bcover { border-radius: 7px; flex-shrink: 0; }
+    .binfo  { flex: 1; min-width: 0; }
+    .btitle { font-size: 11px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bauthor{ font-size: 9px; font-weight: 600; opacity: .45; margin-bottom: 5px; }
+    .bpct   { font-size: 8px; font-weight: 700; opacity: .4; flex-shrink: 0; }
+
+    /* progress bar */
+    .pbar { height: 3px; border-radius: 999px; overflow: hidden; }
+    .pbar-track-light { background: rgba(28,26,23,0.09); }
+    .pbar-track-dark  { background: rgba(255,255,255,0.09); }
+    .pbar-fill        { height: 100%; border-radius: 999px; background: #5927E0; }
+
+    /* challenge row */
+    .crow { padding: 11px 0; }
+    .crow-sep-light { border-bottom: 1px solid rgba(28,26,23,0.07); }
+    .crow-sep-dark  { border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .crow-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 7px; gap: 8px; }
+    .crow-title { font-size: 10px; font-weight: 800; flex: 1; line-height: 1.4; }
+    .crow-xp    { font-size: 9px; font-weight: 800; color: #7C3AED; flex-shrink: 0; }
+    .crow-prog  { font-size: 8px; font-weight: 700; opacity: .38; margin-top: 4px; }
+
+    /* vocab item */
+    .vitem { border-radius: 11px; padding: 9px 12px; margin-bottom: 6px; }
+    .vitem-light { background: #EDEAE3; }
+    .vitem-dark  { background: rgba(255,255,255,0.06); }
+    .vword  { font-size: 13px; font-weight: 900; margin-bottom: 2px; }
+    .vtype  { font-size: 9px; font-weight: 700; color: #7C3AED; margin-bottom: 4px; }
+    .vdef   { font-size: 9px; font-weight: 500; line-height: 1.45; opacity: .5; }
+
+    /* section label inside phone */
+    .slabel { font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; opacity: .35; margin-bottom: 5px; }
+
+    /* stars */
+    .stars { display: flex; gap: 2px; }
+    .star  {
+      width: 9px; height: 9px;
+      clip-path: polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
+    }
+    .star-on  { background: #5927E0; }
+    .star-off-light { background: rgba(28,26,23,0.14); }
+    .star-off-dark  { background: rgba(255,255,255,0.14); }
+
+    /* ── STATS BAR ──────────────────────────────────────────── */
+    .stats {
+      background: var(--dark);
+      padding: 52px;
+    }
+    .stats-inner {
+      max-width: 1240px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(4,1fr);
+    }
+    .stat { text-align: center; padding: 0 28px; }
+    .stat + .stat { border-left: 1px solid rgba(255,255,255,0.07); }
+    .stat-n {
+      font-size: 52px; font-weight: 900; color: #fff;
+      letter-spacing: -3px; line-height: 1; margin-bottom: 8px;
+    }
+    .stat-n span { color: var(--primary); }
+    .stat-l { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.36); }
+
+    /* ── FEATURES ───────────────────────────────────────────── */
+    .section-wrap { max-width: 1240px; margin: 0 auto; padding: 120px 52px; }
+    .eyebrow {
+      font-size: 11px; font-weight: 800; color: var(--primary);
+      letter-spacing: 2px; text-transform: uppercase; margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: clamp(34px, 4vw, 54px);
+      font-weight: 900; letter-spacing: -1.5px;
+      color: var(--dark); line-height: 1.08;
+      margin-bottom: 56px; max-width: 580px;
+    }
+    .features-grid {
+      display: grid; grid-template-columns: repeat(2,1fr); gap: 18px;
+    }
+    .fcard {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 26px; padding: 38px;
+      transition: transform .2s;
+    }
+    .fcard:hover { transform: translateY(-4px); }
+    .fcard.purple {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+    .fcard-icon {
+      width: 50px; height: 50px; border-radius: 15px;
+      background: rgba(28,26,23,0.07);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; margin-bottom: 22px;
+    }
+    .fcard.purple .fcard-icon { background: rgba(255,255,255,0.15); }
+    .fcard-title {
+      font-size: 21px; font-weight: 800;
+      color: var(--dark); margin-bottom: 10px; letter-spacing: -.4px;
+    }
+    .fcard.purple .fcard-title { color: #fff; }
+    .fcard-desc {
+      font-size: 15px; font-weight: 500; color: var(--muted); line-height: 1.65;
+    }
+    .fcard.purple .fcard-desc { color: rgba(255,255,255,0.65); }
+
+    /* ── SHOWCASE (dark) ─────────────────────────────────────── */
+    .showcase {
+      background: var(--dark);
+      padding: 120px 52px;
+      overflow: hidden;
+    }
+    .showcase-hdr {
+      max-width: 1240px; margin: 0 auto 80px;
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 60px; align-items: end;
+    }
+    .showcase .eyebrow { color: rgba(140,100,255,0.9); }
+    .showcase .section-title { color: #fff; margin-bottom: 0; }
+    .showcase-sub {
+      font-size: 16px; font-weight: 500;
+      color: rgba(255,255,255,0.38); line-height: 1.7;
+    }
+    .phones-row {
+      max-width: 1000px; margin: 0 auto;
+      display: flex; gap: 20px;
+      justify-content: center; align-items: flex-end;
+    }
+
+    /* ── QUOTE ───────────────────────────────────────────────── */
+    .quote-section {
+      background: var(--primary);
+      padding: 110px 52px; text-align: center;
+    }
+    .quote-mark { font-size: 80px; font-weight: 900; color: rgba(255,255,255,0.15); line-height: .8; margin-bottom: 0; }
+    .quote-text {
+      font-size: clamp(22px, 3.2vw, 40px);
+      font-weight: 800; color: #fff;
+      letter-spacing: -.8px; max-width: 760px;
+      margin: 0 auto 20px; line-height: 1.25;
+      font-style: italic;
+    }
+    .quote-author {
+      font-size: 14px; font-weight: 700;
+      color: rgba(255,255,255,0.45); letter-spacing: .5px;
+    }
+
+    /* ── GAMIFICATION ────────────────────────────────────────── */
+    .gami-wrap {
+      max-width: 1240px; margin: 0 auto;
+      padding: 120px 52px;
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 80px; align-items: center;
+    }
+    .gami-pill {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+    }
+    .gami-pill-icon {
+      width: 38px; height: 38px; border-radius: 11px;
+      background: var(--primary-soft);
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
+    .gami-pill-title { font-size: 15px; font-weight: 800; color: var(--dark); }
+    .gami-pill-sub   { font-size: 13px; font-weight: 500; color: var(--muted); }
+
+    .xp-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px; padding: 28px;
+    }
+    .xp-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+    .xp-badge {
+      width: 52px; height: 52px; border-radius: 15px;
+      background: var(--primary);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 900; color: #fff; flex-shrink: 0;
+    }
+    .xp-name { font-size: 17px; font-weight: 900; color: var(--dark); }
+    .xp-sub  { font-size: 13px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+    .xp-bar-row { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
+    .xp-bar     { height: 7px; background: var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 24px; }
+    .xp-bar-fill { height: 100%; width: 68%; background: linear-gradient(90deg,#5927E0,#7C3AED); border-radius: 999px; }
+    .xp-crow    { padding: 12px 0; border-top: 1px solid var(--border); }
+    .xp-crow-h  { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 7px; }
+    .xp-crow-t  { font-size: 14px; font-weight: 700; color: var(--dark); flex: 1; }
+    .xp-crow-xp { font-size: 13px; font-weight: 800; color: var(--primary); }
+    .xp-crow-p  { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 5px; }
+    .xp-pbar    { height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; }
+    .xp-pbar-f  { height: 100%; border-radius: 999px; background: #5927E0; }
+
+    /* ── CTA ─────────────────────────────────────────────────── */
+    .cta-section {
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding: 120px 52px; text-align: center;
+    }
+    .app-icon {
+      width: 72px; height: 72px; border-radius: 20px;
+      background: var(--primary);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 32px; font-weight: 900; color: #fff;
+      margin-bottom: 28px;
+      box-shadow: 0 16px 40px rgba(89,39,224,0.32);
+    }
+    .cta-title {
+      font-size: clamp(38px, 5.5vw, 68px);
+      font-weight: 900; letter-spacing: -2.5px;
+      color: var(--dark); line-height: 1.02; margin-bottom: 20px;
+    }
+    .cta-sub {
+      font-size: 18px; font-weight: 500; color: var(--muted);
+      line-height: 1.6; max-width: 500px; margin: 0 auto 44px;
+    }
+    .cta-btns {
+      display: flex; gap: 14px; justify-content: center; align-items: center;
+    }
+
+    /* ── FOOTER ──────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 52px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .footer-logo { font-size: 18px; font-weight: 900; color: var(--dark); }
+    .footer-logo span { color: var(--primary); }
+    .footer-copy { font-size: 13px; font-weight: 500; color: var(--muted); }
+
+    /* ── RESPONSIVE ──────────────────────────────────────────── */
+    @media (max-width: 960px) {
+      nav { padding: 16px 24px; }
+      .nav-links { display: none; }
+      .hero { grid-template-columns: 1fr; padding: 120px 24px 80px; }
+      .hero-right { margin-top: 40px; }
+      .stats { padding: 40px 24px; }
+      .stats-inner { grid-template-columns: repeat(2,1fr); gap: 32px 0; }
+      .stat + .stat { border-left: none; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 32px; }
+      .stat:nth-child(1), .stat:nth-child(2) { border-top: none; }
+      .stat:nth-child(2) { border-left: 1px solid rgba(255,255,255,0.07); }
+      .section-wrap { padding: 80px 24px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .showcase { padding: 80px 24px; }
+      .showcase-hdr { grid-template-columns: 1fr; margin-bottom: 60px; }
+      .phones-row { flex-wrap: wrap; }
+      .gami-wrap { grid-template-columns: 1fr; padding: 80px 24px; gap: 48px; }
+      .cta-section { padding: 80px 24px; }
+      footer { flex-direction: column; gap: 12px; text-align: center; padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══ NAV ════════════════════════════════════════════════════════════════ -->
+<nav>
+  <a href="#" class="nav-logo">book<span>ly</span></a>
+  <div class="nav-links">
+    <a href="#features" class="nav-link">Fonctionnalités</a>
+    <a href="#experience" class="nav-link">L'expérience</a>
+    <a href="#defis" class="nav-link">Défis</a>
+  </div>
+  <a href="#download" class="nav-cta">Télécharger</a>
+</nav>
+
+<!-- ═══ HERO ════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="hero">
+
+    <!-- Left -->
+    <div>
+      <div class="hero-badge">✦ Compagnon de lecture</div>
+      <h1 class="hero-title">Lis.<br>Retiens.<br><em>Progresse.</em></h1>
+      <p class="hero-sub">Bookly transforme chaque livre en expérience complète — suivi, notes, citations, vocabulaire et défis pour ne plus jamais perdre le fil.</p>
+      <div class="hero-btns">
+        <a href="#download" class="btn-primary">Commencer gratuitement</a>
+        <a href="#features" class="btn-ghost">Découvrir →</a>
+      </div>
+    </div>
+
+    <!-- Right — phones -->
+    <div class="hero-right">
+      <div class="hero-glow"></div>
+
+      <!-- Secondary phone — book detail -->
+      <div class="phone phone-float-delay" style="width:230px;height:480px;opacity:.55;transform:rotate(-4deg) translateY(30px);">
+        <div class="phone-inner">
+          <div class="phone-island"></div>
+          <div class="phone-screen screen-light">
+            <div class="sb light-text">
+              <span class="sb-time">9:41</span>
+              <div class="sb-icons"><b></b><b></b><b></b></div>
+            </div>
+            <div class="ap">
+              <div style="display:flex;justify-content:space-between;margin-bottom:14px;">
+                <span style="font-size:16px;color:#1C1A17;">‹</span>
+                <span style="font-size:14px;color:rgba(28,26,23,0.4);">···</span>
+              </div>
+              <!-- cover -->
+              <div style="width:58px;height:84px;border-radius:9px;background:linear-gradient(145deg,#2D6A4F,#1B4332);margin:0 auto 10px;"></div>
+              <div style="font-size:11px;font-weight:900;color:#1C1A17;text-align:center;margin-bottom:1px;">Dune</div>
+              <div style="font-size:8px;font-weight:600;color:rgba(28,26,23,0.4);text-align:center;margin-bottom:11px;">Frank Herbert</div>
+              <div class="s-divider s-div-light"></div>
+              <div class="slabel" style="color:#1C1A17;">Résumé</div>
+              <div style="font-size:9px;font-weight:500;color:rgba(28,26,23,0.5);line-height:1.5;margin-bottom:10px;">Un enfant noble hérite du contrôle d'une planète désertique et découvre sa destinée au sein d'une civilisation mystique…</div>
+              <div class="s-divider s-div-light"></div>
+              <div class="slabel" style="color:#1C1A17;">Note</div>
+              <div class="stars" style="margin-bottom:10px;">
+                <div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-off-light"></div>
+              </div>
+              <div class="s-divider s-div-light"></div>
+              <div class="slabel" style="color:#1C1A17;">Progression</div>
+              <div style="display:flex;justify-content:space-between;font-size:9px;font-weight:700;color:#1C1A17;margin-bottom:5px;">
+                <span>412 / 667 pages</span><span style="color:#5927E0;">62%</span>
+              </div>
+              <div class="pbar pbar-track-light" style="height:4px;"><div class="pbar-fill" style="width:62%;"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main phone — Library -->
+      <div class="phone phone-float" style="width:260px;height:540px;z-index:2;">
+        <div class="phone-inner">
+          <div class="phone-island"></div>
+          <div class="phone-screen screen-light">
+            <div class="sb light-text">
+              <span class="sb-time">9:41</span>
+              <div class="sb-icons"><b></b><b></b><b></b></div>
+            </div>
+            <div class="ap">
+              <div style="font-size:11px;font-weight:600;color:rgba(28,26,23,0.4);margin-bottom:2px;">Bibliothèque</div>
+              <div class="s-heading" style="color:#1C1A17;margin-bottom:14px;">Mes livres</div>
+
+              <div class="brow brow-light">
+                <div class="bcover" style="width:34px;height:50px;background:linear-gradient(145deg,#7C5CBF,#4A3080);"></div>
+                <div class="binfo">
+                  <div class="btitle" style="color:#1C1A17;">L'Étranger</div>
+                  <div class="bauthor" style="color:#1C1A17;">Albert Camus</div>
+                  <div class="pbar pbar-track-light"><div class="pbar-fill" style="width:100%;"></div></div>
+                </div>
+                <div class="stars"><div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div></div>
+              </div>
+
+              <div class="brow brow-light">
+                <div class="bcover" style="width:34px;height:50px;background:linear-gradient(145deg,#2D6A4F,#1B4332);"></div>
+                <div class="binfo">
+                  <div class="btitle" style="color:#1C1A17;">Dune</div>
+                  <div class="bauthor" style="color:#1C1A17;">Frank Herbert</div>
+                  <div class="pbar pbar-track-light"><div class="pbar-fill" style="width:62%;"></div></div>
+                </div>
+                <div class="bpct" style="color:#1C1A17;">62%</div>
+              </div>
+
+              <div class="brow brow-light">
+                <div class="bcover" style="width:34px;height:50px;background:linear-gradient(145deg,#C4676E,#8B2635);"></div>
+                <div class="binfo">
+                  <div class="btitle" style="color:#1C1A17;">Crime et Châtiment</div>
+                  <div class="bauthor" style="color:#1C1A17;">Dostoïevski</div>
+                  <div class="pbar pbar-track-light"><div class="pbar-fill" style="width:35%;"></div></div>
+                </div>
+                <div class="bpct" style="color:#1C1A17;">35%</div>
+              </div>
+
+              <div class="brow brow-light">
+                <div class="bcover" style="width:34px;height:50px;background:linear-gradient(145deg,#C8956C,#8B5E3C);"></div>
+                <div class="binfo">
+                  <div class="btitle" style="color:#1C1A17;">Le Comte de Monte-Cristo</div>
+                  <div class="bauthor" style="color:#1C1A17;">Alexandre Dumas</div>
+                  <div class="pbar pbar-track-light"><div class="pbar-fill" style="width:78%;"></div></div>
+                </div>
+                <div class="bpct" style="color:#1C1A17;">78%</div>
+              </div>
+
+              <div class="brow brow-light">
+                <div class="bcover" style="width:34px;height:50px;background:linear-gradient(145deg,#5B8DB8,#2C5F8A);"></div>
+                <div class="binfo">
+                  <div class="btitle" style="color:#1C1A17;">1984</div>
+                  <div class="bauthor" style="color:#1C1A17;">George Orwell</div>
+                  <div class="pbar pbar-track-light"><div class="pbar-fill" style="width:15%;"></div></div>
+                </div>
+                <div class="bpct" style="color:#1C1A17;">15%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STATS ════════════════════════════════════════════════════════════════ -->
+<div class="stats">
+  <div class="stats-inner">
+    <div class="stat">
+      <div class="stat-n">2<span>k+</span></div>
+      <div class="stat-l">Lecteurs actifs</div>
+    </div>
+    <div class="stat">
+      <div class="stat-n">18<span>k</span></div>
+      <div class="stat-l">Livres suivis</div>
+    </div>
+    <div class="stat">
+      <div class="stat-n">94<span>k</span></div>
+      <div class="stat-l">Pages lues</div>
+    </div>
+    <div class="stat">
+      <div class="stat-n">7<span>k+</span></div>
+      <div class="stat-l">Défis complétés</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ FEATURES ═════════════════════════════════════════════════════════════ -->
+<section id="features">
+  <div class="section-wrap">
+    <div class="eyebrow">Fonctionnalités</div>
+    <h2 class="section-title">Tout ce dont tu as besoin pour lire mieux</h2>
+
+    <div class="features-grid">
+      <div class="fcard purple">
+        <div class="fcard-icon">📚</div>
+        <div class="fcard-title">Ta bibliothèque, enfin organisée</div>
+        <div class="fcard-desc">Ajoute tes livres, suis ta progression page par page. Statut, note, résumé personnel — tout est là, au même endroit.</div>
+      </div>
+      <div class="fcard">
+        <div class="fcard-icon">✍️</div>
+        <div class="fcard-title">Notes & Citations</div>
+        <div class="fcard-desc">Capture les passages qui t'ont marqué. Retrouve-les instantanément, enrichis-les, relis-les. Tes lectures laissent une trace durable.</div>
+      </div>
+      <div class="fcard">
+        <div class="fcard-icon">💬</div>
+        <div class="fcard-title">Vocabulaire enrichi</div>
+        <div class="fcard-desc">Enregistre les mots nouveaux avec leur définition. Définition auto depuis le dictionnaire. Un lexique personnel qui grandit à chaque lecture.</div>
+      </div>
+      <div class="fcard purple">
+        <div class="fcard-icon">🏆</div>
+        <div class="fcard-title">Défis & progression XP</div>
+        <div class="fcard-desc">Reste motivé grâce aux défis de lecture. Gagne des XP, monte de niveau et célèbre chaque livre terminé avec une récompense.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SHOWCASE (dark) ══════════════════════════════════════════════════════ -->
+<section id="experience" class="showcase">
+  <div class="showcase-hdr">
+    <div>
+      <div class="eyebrow">L'expérience</div>
+      <h2 class="section-title">Conçu pour les vrais lecteurs</h2>
+    </div>
+    <p class="showcase-sub">Un design pensé pour s'effacer devant les mots. Chaque interaction est fluide, rapide, agréable — parce que l'essentiel, c'est le livre.</p>
+  </div>
+
+  <div class="phones-row">
+
+    <!-- Phone 1: Book detail (dark) -->
+    <div class="phone" style="width:240px;height:500px;transform:rotate(-3.5deg) translateY(20px);opacity:.85;">
+      <div class="phone-inner">
+        <div class="phone-island"></div>
+        <div class="phone-screen screen-dark">
+          <div class="sb dark-text">
+            <span class="sb-time">9:41</span>
+            <div class="sb-icons"><b></b><b></b><b></b></div>
+          </div>
+          <div class="ap">
+            <div style="display:flex;justify-content:space-between;margin-bottom:14px;">
+              <span style="font-size:16px;color:rgba(255,255,255,0.9);">‹</span>
+              <span style="font-size:14px;color:rgba(255,255,255,0.3);">···</span>
+            </div>
+            <div style="width:60px;height:88px;border-radius:9px;background:linear-gradient(145deg,#2D6A4F,#1B4332);margin:0 auto 10px;"></div>
+            <div style="font-size:11px;font-weight:900;color:rgba(255,255,255,0.92);text-align:center;margin-bottom:1px;">Dune</div>
+            <div style="font-size:8px;font-weight:600;color:rgba(255,255,255,0.35);text-align:center;margin-bottom:10px;">Frank Herbert</div>
+            <div class="s-divider s-div-dark"></div>
+            <div class="slabel" style="color:#fff;">Note</div>
+            <div class="stars" style="margin-bottom:9px;">
+              <div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-on"></div><div class="star star-off-dark"></div>
+            </div>
+            <div class="s-divider s-div-dark"></div>
+            <div class="slabel" style="color:#fff;">Progression</div>
+            <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;color:rgba(255,255,255,0.9);margin-bottom:6px;">
+                <span>412 / 667 pages</span><span style="color:#7C3AED;">62%</span>
+              </div>
+              <div class="pbar pbar-track-dark" style="height:4px;"><div class="pbar-fill" style="width:62%;"></div></div>
+            </div>
+            <div class="s-divider s-div-dark"></div>
+            <div class="slabel" style="color:#fff;">Ma fiche</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <div style="background:rgba(89,39,224,0.2);border-radius:8px;padding:5px 9px;font-size:9px;font-weight:700;color:#9B78FF;">Citations · 8</div>
+              <div style="background:rgba(89,39,224,0.2);border-radius:8px;padding:5px 9px;font-size:9px;font-weight:700;color:#9B78FF;">Vocab · 12</div>
+              <div style="background:rgba(89,39,224,0.2);border-radius:8px;padding:5px 9px;font-size:9px;font-weight:700;color:#9B78FF;">Notes · 4</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phone 2: Challenges (center, largest) -->
+    <div class="phone" style="width:270px;height:570px;z-index:2;">
+      <div class="phone-inner">
+        <div class="phone-island"></div>
+        <div class="phone-screen screen-dark">
+          <div class="sb dark-text">
+            <span class="sb-time">9:41</span>
+            <div class="sb-icons"><b></b><b></b><b></b></div>
+          </div>
+          <div class="ap">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <div class="s-heading" style="color:rgba(255,255,255,0.92);">Défis</div>
+              <span style="font-size:14px;color:rgba(255,255,255,0.3);">✕</span>
+            </div>
+            <!-- XP -->
+            <div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:12px;margin-bottom:14px;">
+              <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+                <div style="width:34px;height:34px;background:#5927E0;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#fff;flex-shrink:0;">7</div>
+                <div>
+                  <div style="font-size:11px;font-weight:800;color:rgba(255,255,255,0.9);">Niveau 7 · Explorateur</div>
+                  <div style="font-size:9px;font-weight:600;color:rgba(255,255,255,0.35);">1 240 / 1 800 XP</div>
+                </div>
+              </div>
+              <div style="height:5px;background:rgba(255,255,255,0.08);border-radius:999px;overflow:hidden;">
+                <div style="height:100%;width:68%;background:linear-gradient(90deg,#5927E0,#7C3AED);border-radius:999px;"></div>
+              </div>
+            </div>
+            <!-- tabs -->
+            <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:6px;">
+              <div style="flex:1;text-align:center;padding:7px 0;font-size:11px;font-weight:800;color:#7C3AED;border-bottom:2px solid #7C3AED;margin-bottom:-1px;">En cours</div>
+              <div style="flex:1;text-align:center;padding:7px 0;font-size:11px;font-weight:600;color:rgba(255,255,255,0.28);">Terminés</div>
+            </div>
+            <!-- challenges -->
+            <div class="crow crow-sep-dark">
+              <div class="crow-head">
+                <div class="crow-title" style="color:rgba(255,255,255,0.9);">Lire 5 livres ce mois-ci</div>
+                <div class="crow-xp">+150 XP</div>
+              </div>
+              <div class="pbar pbar-track-dark"><div class="pbar-fill" style="width:60%;"></div></div>
+              <div class="crow-prog" style="color:rgba(255,255,255,0.35);">3 / 5</div>
+            </div>
+            <div class="crow crow-sep-dark">
+              <div class="crow-head">
+                <div class="crow-title" style="color:rgba(255,255,255,0.9);">Ajouter 20 mots de vocabulaire</div>
+                <div class="crow-xp">+80 XP</div>
+              </div>
+              <div class="pbar pbar-track-dark"><div class="pbar-fill" style="width:75%;"></div></div>
+              <div class="crow-prog" style="color:rgba(255,255,255,0.35);">15 / 20</div>
+            </div>
+            <div class="crow crow-sep-dark">
+              <div class="crow-head">
+                <div class="crow-title" style="color:rgba(255,255,255,0.9);">Lire 500 pages en une semaine</div>
+                <div class="crow-xp">+200 XP</div>
+              </div>
+              <div class="pbar pbar-track-dark"><div class="pbar-fill" style="width:44%;"></div></div>
+              <div class="crow-prog" style="color:rgba(255,255,255,0.35);">220 / 500</div>
+            </div>
+            <div class="crow" style="border-bottom:none;">
+              <div class="crow-head">
+                <div class="crow-title" style="color:rgba(255,255,255,0.9);">Noter 10 citations</div>
+                <div class="crow-xp">+60 XP</div>
+              </div>
+              <div class="pbar pbar-track-dark"><div class="pbar-fill" style="width:90%;"></div></div>
+              <div class="crow-prog" style="color:rgba(255,255,255,0.35);">9 / 10</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phone 3: Vocab (dark) -->
+    <div class="phone" style="width:240px;height:500px;transform:rotate(3.5deg) translateY(20px);opacity:.85;">
+      <div class="phone-inner">
+        <div class="phone-island"></div>
+        <div class="phone-screen screen-dark">
+          <div class="sb dark-text">
+            <span class="sb-time">9:41</span>
+            <div class="sb-icons"><b></b><b></b><b></b></div>
+          </div>
+          <div class="ap">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+              <span style="font-size:16px;color:rgba(255,255,255,0.9);">‹</span>
+              <div style="font-size:18px;font-weight:900;color:rgba(255,255,255,0.92);">Vocabulaire</div>
+            </div>
+            <div class="vitem vitem-dark">
+              <div class="vword" style="color:rgba(255,255,255,0.92);">Acrimonie</div>
+              <div class="vtype">nom · fém.</div>
+              <div class="vdef" style="color:rgba(255,255,255,0.45);">Aigreur qui se manifeste dans les propos ou le comportement.</div>
+            </div>
+            <div class="vitem vitem-dark">
+              <div class="vword" style="color:rgba(255,255,255,0.92);">Épistémique</div>
+              <div class="vtype">adj.</div>
+              <div class="vdef" style="color:rgba(255,255,255,0.45);">Relatif à la connaissance et à l'épistémologie.</div>
+            </div>
+            <div class="vitem vitem-dark">
+              <div class="vword" style="color:rgba(255,255,255,0.92);">Aporie</div>
+              <div class="vtype">nom · fém.</div>
+              <div class="vdef" style="color:rgba(255,255,255,0.45);">Difficulté logique irréductible, impasse de la pensée.</div>
+            </div>
+            <div class="vitem vitem-dark">
+              <div class="vword" style="color:rgba(255,255,255,0.92);">Palimpseste</div>
+              <div class="vtype">nom · masc.</div>
+              <div class="vdef" style="color:rgba(255,255,255,0.45);">Manuscrit dont on a gratté la première écriture pour réécrire.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══ QUOTE ═════════════════════════════════════════════════════════════════ -->
+<div class="quote-section">
+  <div class="quote-mark">"</div>
+  <p class="quote-text">Un lecteur vit mille vies avant de mourir. Celui qui ne lit jamais n'en vit qu'une.</p>
+  <p class="quote-author">— George R.R. Martin</p>
+</div>
+
+<!-- ═══ GAMIFICATION ══════════════════════════════════════════════════════════ -->
+<section id="defis">
+  <div class="gami-wrap">
+    <div>
+      <div class="eyebrow">Progression</div>
+      <h2 class="section-title" style="max-width:100%;">La lecture comme un jeu</h2>
+      <p style="font-size:17px;font-weight:500;color:var(--muted);line-height:1.7;margin-bottom:36px;">Relève des défis, gagne des XP à chaque livre lu, note enregistrée, mot ajouté. Bookly transforme ta progression en aventure.</p>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div class="gami-pill">
+          <div class="gami-pill-icon">🎯</div>
+          <div>
+            <div class="gami-pill-title">Défis hebdomadaires</div>
+            <div class="gami-pill-sub">Nouveaux objectifs chaque semaine</div>
+          </div>
+        </div>
+        <div class="gami-pill">
+          <div class="gami-pill-icon">⚡</div>
+          <div>
+            <div class="gami-pill-title">XP & niveaux</div>
+            <div class="gami-pill-sub">Monte de niveau au fil de tes lectures</div>
+          </div>
+        </div>
+        <div class="gami-pill">
+          <div class="gami-pill-icon">🏅</div>
+          <div>
+            <div class="gami-pill-title">Récompenses</div>
+            <div class="gami-pill-sub">Chaque livre terminé est célébré</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="xp-card">
+        <div class="xp-header">
+          <div class="xp-badge">7</div>
+          <div>
+            <div class="xp-name">Niveau 7 · Explorateur</div>
+            <div class="xp-sub">1 240 / 1 800 XP</div>
+          </div>
+        </div>
+        <div class="xp-bar-row"><span>Progression vers le niveau 8</span><span>68%</span></div>
+        <div class="xp-bar"><div class="xp-bar-fill"></div></div>
+        <div class="xp-crow">
+          <div class="xp-crow-h">
+            <div class="xp-crow-t">Lire 5 livres ce mois-ci</div>
+            <div class="xp-crow-xp">+150 XP</div>
+          </div>
+          <div class="xp-pbar"><div class="xp-pbar-f" style="width:60%;"></div></div>
+          <div class="xp-crow-p">3 / 5 livres</div>
+        </div>
+        <div class="xp-crow">
+          <div class="xp-crow-h">
+            <div class="xp-crow-t">Ajouter 20 mots de vocabulaire</div>
+            <div class="xp-crow-xp">+80 XP</div>
+          </div>
+          <div class="xp-pbar"><div class="xp-pbar-f" style="width:75%;"></div></div>
+          <div class="xp-crow-p">15 / 20 mots</div>
+        </div>
+        <div class="xp-crow" style="border-bottom:none;">
+          <div class="xp-crow-h">
+            <div class="xp-crow-t">Noter 10 citations marquantes</div>
+            <div class="xp-crow-xp">+60 XP</div>
+          </div>
+          <div class="xp-pbar"><div class="xp-pbar-f" style="width:90%;"></div></div>
+          <div class="xp-crow-p">9 / 10 citations</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CTA ═══════════════════════════════════════════════════════════════════ -->
+<div id="download" class="cta-section">
+  <div class="app-icon">b</div>
+  <h2 class="cta-title">Prêt à lire autrement ?</h2>
+  <p class="cta-sub">Rejoins les lecteurs qui transforment chaque page en expérience mémorable. Gratuit, sans publicité.</p>
+  <div class="cta-btns">
+    <a href="#" class="btn-primary" style="font-size:16px;padding:18px 40px;">Télécharger Bookly</a>
+  </div>
+</div>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════════════════════ -->
+<footer>
+  <div class="footer-logo">book<span>ly</span></div>
+  <div class="footer-copy">© 2025 Bookly — Fait avec ♥ pour les lecteurs.</div>
+</footer>
+
+</body>
+</html>
