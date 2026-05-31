@@ -291,14 +291,13 @@ final class AuthController
     /**
      * POST /v1/auth/magic-link/request
      * Body: { "email": "..." }
-     * Envoie un lien magique de connexion par email.
+     * Génère un code OTP à 6 chiffres et l'envoie par email.
      */
     public function magicLinkRequest(): void
     {
         $body  = Request::json();
         $email = trim(strtolower((string)($body['email'] ?? '')));
 
-        // Réponse générique anti-énumération
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             Response::ok(['sent' => true]);
             return;
@@ -308,7 +307,6 @@ final class AuthController
         $user = $repo->findByEmail($email);
 
         if (!$user) {
-            // Crée un compte minimal — il sera complété après l'onboarding
             $userId = $repo->create([
                 'email'             => $email,
                 'email_verified_at' => null,
@@ -316,48 +314,45 @@ final class AuthController
             $user = $repo->findById($userId);
         }
 
-        $userId    = (int)$user['id'];
-        $mlRepo    = new MagicLinkRepository();
-        $cooldown  = 60;
+        $userId   = (int)$user['id'];
+        $mlRepo   = new MagicLinkRepository();
 
-        if (!$mlRepo->canSend($email, $cooldown)) {
-            // Silencieux : on ne révèle pas s'il y a un cooldown
+        if (!$mlRepo->canSend($email, 60)) {
             Response::ok(['sent' => true]);
             return;
         }
 
-        $ttl      = (int)Env::get('MAGIC_LINK_TTL', '900'); // 15 min par défaut
-        $rawToken = bin2hex(random_bytes(32));
-        $hash     = hash('sha256', $rawToken);
+        $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $hash = hash('sha256', $code);
+        $ttl  = (int)Env::get('MAGIC_LINK_TTL', '900');
 
         $mlRepo->upsertForUser($userId, $email, $hash, $ttl);
-
-        $this->sendMagicLinkEmail($email, $rawToken);
+        $this->sendOtpEmail($email, $code);
 
         Response::ok(['sent' => true]);
     }
 
     /**
-     * GET /v1/auth/magic-link/verify?token=...
-     * Vérifie le token, émet des JWT, redirige vers l'app.
+     * POST /v1/auth/magic-link/verify-code
+     * Body: { "email": "...", "code": "123456" }
+     * Vérifie le code OTP et retourne les tokens en JSON.
      */
-    public function magicLinkVerify(): void
+    public function magicLinkVerifyCode(): void
     {
-        $rawToken  = trim((string)($_GET['token'] ?? ''));
-        $appScheme = (string)Env::get('APP_SCHEME', 'readoutmobile');
+        $body  = Request::json();
+        $email = trim(strtolower((string)($body['email'] ?? '')));
+        $code  = trim((string)($body['code'] ?? ''));
 
-        if ($rawToken === '') {
-            $this->renderSimpleHtml('Lien invalide.', false, 'Bookly – Connexion', 'Connexion', 'Lien invalide', 'Ce lien de connexion est incorrect.');
-            return;
+        if ($email === '' || $code === '') {
+            throw new HttpException(422, 'VALIDATION_ERROR', ['required' => ['email', 'code']], 'Missing fields');
         }
 
-        $hash   = hash('sha256', $rawToken);
+        $hash   = hash('sha256', $code);
         $mlRepo = new MagicLinkRepository();
         $row    = $mlRepo->findValidByTokenHash($hash);
 
-        if (!$row) {
-            $this->renderSimpleHtml('Lien invalide ou expiré.', false, 'Bookly – Connexion', 'Connexion', 'Lien indisponible', 'Ce lien est invalide ou a expiré. Demande-en un nouveau depuis l\'application.');
-            return;
+        if (!$row || (string)$row['email'] !== $email) {
+            throw new HttpException(401, 'INVALID_CODE', [], 'Code invalide ou expiré');
         }
 
         $userId   = (int)$row['user_id'];
@@ -365,21 +360,24 @@ final class AuthController
         $user     = $userRepo->findById($userId);
 
         if (!$user) {
-            $this->renderSimpleHtml('Erreur.', false, 'Bookly – Connexion', 'Connexion', 'Erreur', 'Une erreur est survenue.');
-            return;
+            throw new HttpException(500, 'SERVER_ERROR', [], 'User not found');
         }
 
-        // Marque le token utilisé et vérifie l'email
         $mlRepo->markUsed((int)$row['id']);
         $userRepo->markEmailVerified($userId);
 
         [$at, $rt] = $this->issueTokens($userId);
 
-        $isNew = empty($user['onboarding_completed']) ? '1' : '0';
-
-        // Redirige vers l'app
-        header("Location: {$appScheme}://auth-callback?at=" . urlencode($at) . "&rt=" . urlencode($rt) . "&new={$isNew}");
-        exit;
+        Response::ok([
+            'user'   => $this->publicUser($user),
+            'tokens' => [
+                'tokenType'    => 'Bearer',
+                'accessToken'  => $at,
+                'refreshToken' => $rt,
+                'expiresIn'    => (int)Env::get('JWT_ACCESS_TTL', '900'),
+            ],
+            'isNew' => empty($user['onboarding_completed']),
+        ]);
     }
 
     /* ============================================================
@@ -937,9 +935,10 @@ final class AuthController
         $eyebrow = htmlspecialchars((string)($data['eyebrow'] ?? 'Readout'), ENT_QUOTES, 'UTF-8');
         $title = htmlspecialchars((string)($data['title'] ?? 'Notification'), ENT_QUOTES, 'UTF-8');
         $intro = htmlspecialchars((string)($data['intro'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $buttonLabel = htmlspecialchars((string)($data['buttonLabel'] ?? 'Ouvrir'), ENT_QUOTES, 'UTF-8');
-        $buttonUrl = htmlspecialchars((string)($data['buttonUrl'] ?? '#'), ENT_QUOTES, 'UTF-8');
+        $buttonLabel = htmlspecialchars((string)($data['buttonLabel'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $buttonUrl = htmlspecialchars((string)($data['buttonUrl'] ?? ''), ENT_QUOTES, 'UTF-8');
         $note = htmlspecialchars((string)($data['note'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $extra = (string)($data['extra'] ?? '');
 
         return "
         <div style=\"margin:0;padding:32px 16px;background:#f8fafc;\">
@@ -959,6 +958,9 @@ final class AuthController
                         {$intro}
                     </p>
 
+                    {$extra}
+
+                    " . ($buttonLabel !== '' ? "
                     <div style=\"margin:0 0 28px;\">
                         <a href=\"{$buttonUrl}\"
                            style=\"display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(180deg,#8b5cf6 0%,#7c3aed 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;\">
@@ -972,7 +974,7 @@ final class AuthController
                         </p>
                         <p style=\"margin:0;font-size:13px;line-height:1.7;word-break:break-all;color:#475569;\">
                             {$buttonUrl}
-                        </p>
+                        </p>" : "") . "
                     </div>
 
                     <hr style=\"border:none;border-top:1px solid #e2e8f0;margin:28px 0;\">
@@ -1295,21 +1297,32 @@ final class AuthController
        HELPERS: MAGIC LINK EMAIL
     ============================================================ */
 
-    private function sendMagicLinkEmail(string $email, string $rawToken): void
+    private function sendOtpEmail(string $email, string $code): void
     {
-        $appUrl  = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/');
-        $linkUrl = $appUrl . "/v1/auth/magic-link/verify?token=" . urlencode($rawToken);
+        $digits = str_split($code);
+
+        $digitBoxes = '';
+        foreach ($digits as $d) {
+            $digitBoxes .= "
+                <span style=\"display:inline-block;width:44px;height:54px;line-height:54px;text-align:center;
+                              font-size:28px;font-weight:800;color:#0f172a;
+                              background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;
+                              margin:0 3px;letter-spacing:0;\">
+                    {$d}
+                </span>";
+        }
 
         $html = $this->buildEmailLayout([
-            'eyebrow'     => 'Connexion à Bookly',
-            'title'       => 'Ton lien magique',
-            'intro'       => "Clique sur le bouton ci-dessous pour te connecter instantanément à Bookly. Aucun mot de passe nécessaire.",
-            'buttonLabel' => 'Se connecter à Bookly',
-            'buttonUrl'   => $linkUrl,
-            'note'        => "Ce lien est valable 15 minutes et ne peut être utilisé qu'une seule fois. Si tu n'es pas à l'origine de cette demande, ignore cet email.",
+            'eyebrow'     => 'Connexion à Readout',
+            'title'       => 'Ton code de connexion',
+            'intro'       => "Utilise ce code dans l'application pour te connecter. Il est valable 15 minutes.",
+            'buttonLabel' => '',
+            'buttonUrl'   => '',
+            'note'        => "Si tu n'es pas à l'origine de cette demande, ignore cet email. Ne partage jamais ce code.",
+            'extra'       => "<div style=\"text-align:center;margin:28px 0;\">{$digitBoxes}</div>",
         ]);
 
-        Mailer::send($email, 'Ton lien de connexion Bookly', $html);
+        Mailer::send($email, 'Ton code de connexion Readout', $html);
     }
 
     /* ============================================================

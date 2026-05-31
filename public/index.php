@@ -221,7 +221,11 @@ $router->add('POST', "{$prefix}/auth/magic-link/request", function () use ($auth
     RateLimiter::check('auth:magic:' . RateLimiter::ip(), 5, 300);
     $auth->magicLinkRequest();
 });
-$router->add('GET', "{$prefix}/auth/magic-link/verify", fn() => $auth->magicLinkVerify());
+$router->add('GET',  "{$prefix}/auth/magic-link/verify",      fn() => $auth->magicLinkVerify());
+$router->add('POST', "{$prefix}/auth/magic-link/verify-code", function () use ($auth) {
+    RateLimiter::check('auth:otp:' . RateLimiter::ip(), 10, 300);
+    $auth->magicLinkVerifyCode();
+});
 
 // Onboarding
 $router->add('POST', "{$prefix}/auth/onboarding", fn() => $auth->saveOnboarding());
