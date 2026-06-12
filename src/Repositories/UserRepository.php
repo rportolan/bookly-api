@@ -116,19 +116,30 @@ final class UserRepository
         string $readingGoal,
         array $genres
     ): void {
+        // Objectif de lecture → pages par jour
+        $goalPages = match ($readingGoal) {
+            'occasionnel' => 10,
+            'regulier'    => 20,
+            'passionne'   => 35,
+            'vorace'      => 50,
+            default       => 20,
+        };
+
         $pdo  = Db::pdo();
         $stmt = $pdo->prepare("
             UPDATE users
-            SET first_name            = :first_name,
-                reading_goal          = :reading_goal,
-                preferred_genres      = :preferred_genres,
-                onboarding_completed  = 1
+            SET first_name           = :first_name,
+                reading_goal         = :reading_goal,
+                preferred_genres     = :preferred_genres,
+                goal_pages_per_day   = :goal_pages,
+                onboarding_completed = 1
             WHERE id = :id LIMIT 1
         ");
         $stmt->execute([
             'first_name'       => $firstName,
             'reading_goal'     => $readingGoal,
             'preferred_genres' => json_encode($genres, JSON_UNESCAPED_UNICODE),
+            'goal_pages'       => $goalPages,
             'id'               => $userId,
         ]);
     }
