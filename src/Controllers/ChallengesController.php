@@ -35,7 +35,14 @@ final class ChallengesController
         // Top 5
         $top = array_slice($active, 0, 5);
 
-        Response::ok(['challenges' => $top]);
+        // Récompenses fraîchement débloquées (non encore vues) — pour
+        // déclencher l'écran de félicitation directement depuis le dashboard
+        $justCompleted = $repo->popJustCompleted($uid);
+
+        Response::ok([
+            'challenges'    => $top,
+            'justCompleted' => $justCompleted,
+        ]);
     }
 
     // GET /challenges/page — dedicated challenges screen
