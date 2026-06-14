@@ -35,13 +35,22 @@ final class ChallengesController
         // Top 5
         $top = array_slice($active, 0, 5);
 
-        // Récompenses fraîchement débloquées (non encore vues) — pour
-        // déclencher l'écran de félicitation directement depuis le dashboard
-        $justCompleted = $repo->popJustCompleted($uid);
+        Response::ok(['challenges' => $top]);
+    }
+
+    // GET /challenges/check — léger : auto-complète et renvoie les
+    // récompenses fraîchement débloquées (non encore vues). Appelé par
+    // le host global après chaque action pouvant compléter un défi.
+    public function check(): void
+    {
+        $uid  = Auth::requireAuth();
+        $repo = new ChallengeRepository();
+
+        $challenges = $repo->getActiveChallenges($uid);
+        $this->autoComplete($uid, $repo, $challenges);
 
         Response::ok([
-            'challenges'    => $top,
-            'justCompleted' => $justCompleted,
+            'justCompleted' => $repo->popJustCompleted($uid),
         ]);
     }
 

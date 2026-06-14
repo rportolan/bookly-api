@@ -362,8 +362,9 @@ $router->add('GET', "{$prefix}/explore/search", function () use ($exploreCtrl) {
 });
 
 // Challenges
-$router->add('GET', "{$prefix}/challenges",      fn() => $challenges->index());
-$router->add('GET', "{$prefix}/challenges/page", fn() => $challenges->page());
+$router->add('GET', "{$prefix}/challenges",       fn() => $challenges->index());
+$router->add('GET', "{$prefix}/challenges/page",  fn() => $challenges->page());
+$router->add('GET', "{$prefix}/challenges/check", fn() => $challenges->check());
 
 // Dictionary
 $router->add('GET', "{$prefix}/dictionary", fn() => $dictionary->lookup());
