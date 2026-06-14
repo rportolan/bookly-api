@@ -394,7 +394,22 @@ final class BookDiscoveryService
         }
         unset($item);
 
-        usort($items, function (array $a, array $b): int {
+        // Tri à deux niveaux : ISBNdb toujours en premier, puis Google,
+        // puis Open Library — et au sein de chaque source, par qualité.
+        $sourceRank = [
+            'isbndb'       => 0,
+            'google_books' => 1,
+            'open_library' => 2,
+        ];
+
+        usort($items, function (array $a, array $b) use ($sourceRank): int {
+            $rankA = $sourceRank[(string) ($a['source'] ?? '')] ?? 99;
+            $rankB = $sourceRank[(string) ($b['source'] ?? '')] ?? 99;
+
+            if ($rankA !== $rankB) {
+                return $rankA <=> $rankB;
+            }
+
             return ($b['qualityScore'] ?? 0) <=> ($a['qualityScore'] ?? 0);
         });
 
