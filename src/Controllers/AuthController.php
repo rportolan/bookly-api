@@ -394,6 +394,20 @@ final class AuthController
         $uid  = Auth::requireAuth();
         $body = Request::json();
 
+        $repo = new UserRepository();
+        $existing = $repo->findById($uid);
+
+        if (!$existing) {
+            throw new HttpException(401, 'UNAUTHORIZED', [], 'Unauthorized');
+        }
+
+        // Compte déjà onboardé → on n'écrase JAMAIS le profil existant.
+        // (protège contre une ré-inscription avec un email déjà utilisé)
+        if (!empty($existing['onboarding_completed'])) {
+            Response::ok(['user' => $this->publicUser($existing)]);
+            return;
+        }
+
         $firstName    = trim((string)($body['firstName']    ?? ''));
         $readingGoal  = trim((string)($body['readingGoal']  ?? 'regulier'));
         $rawGenres    = is_array($body['preferredGenres'] ?? null) ? $body['preferredGenres'] : [];
@@ -408,7 +422,6 @@ final class AuthController
             fn($g) => $g !== ''
         ));
 
-        $repo = new UserRepository();
         $repo->saveOnboarding($uid, $firstName, $readingGoal, $genres);
 
         $user = $repo->findById($uid);
