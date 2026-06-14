@@ -10,7 +10,7 @@ use App\Services\ProgressService;
 
 final class ChallengesController
 {
-    // GET /challenges — dashboard widget (active weekly + monthly)
+    // GET /challenges — dashboard widget : les 5 défis les plus proches d'aboutir
     public function index(): void
     {
         $uid  = Auth::requireAuth();
@@ -19,7 +19,23 @@ final class ChallengesController
         $challenges = $repo->getActiveChallenges($uid);
         $this->autoComplete($uid, $repo, $challenges);
 
-        Response::ok(['challenges' => $challenges]);
+        // On ne garde que les défis non terminés
+        $active = array_values(array_filter($challenges, fn($c) => !$c['completed']));
+
+        // Tri par proximité d'achèvement (ratio de progression décroissant)
+        usort($active, function ($a, $b) {
+            $ratioA = $a['targetValue'] > 0 ? $a['currentProgress'] / $a['targetValue'] : 0;
+            $ratioB = $b['targetValue'] > 0 ? $b['currentProgress'] / $b['targetValue'] : 0;
+            if ($ratioA === $ratioB) {
+                return $a['id'] <=> $b['id'];
+            }
+            return $ratioB <=> $ratioA;
+        });
+
+        // Top 5
+        $top = array_slice($active, 0, 5);
+
+        Response::ok(['challenges' => $top]);
     }
 
     // GET /challenges/page — dedicated challenges screen
