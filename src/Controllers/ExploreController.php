@@ -37,6 +37,16 @@ final class ExploreController
         Response::ok(['sections' => $sections]);
     }
 
+    public function random(): void
+    {
+        Auth::requireAuth();
+
+        $limit = (int) Request::query('limit', '4');
+        $items = (new ExploreService())->randomBooks($limit);
+
+        Response::ok(['items' => $items]);
+    }
+
     public function search(): void
     {
         Auth::requireAuth();

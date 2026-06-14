@@ -107,6 +107,65 @@ final class ExploreRepository
     }
 
     /**
+     * Returns N random books from the whole catalogue (any category).
+     *
+     * @return list<array>
+     */
+    public function randomBooks(int $limit): array
+    {
+        $limit = max(1, min(20, $limit));
+
+        $pdo  = Db::pdo();
+        $stmt = $pdo->prepare("
+            SELECT eb.id AS eb_id, eb.title, eb.author, eb.cover_url, eb.description,
+                   eb.summary, eb.why_read,
+                   eb.pages, eb.genre, eb.publication_year, eb.language, eb.difficulty,
+                   eb.isbn13, eb.isbn10, eb.provider_book_id, eb.source
+            FROM explore_books eb
+            ORDER BY RAND()
+            LIMIT :lim
+        ");
+        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+        $bookIds = array_map(static fn ($r) => (int) $r['eb_id'], $rows);
+        $tagsByBook = $this->fetchTagsForBooks($bookIds);
+
+        $items = [];
+        foreach ($rows as $row) {
+            $isbn13 = $row['isbn13'] !== null ? (string) $row['isbn13'] : null;
+            $bookId = (int) $row['eb_id'];
+
+            $items[] = [
+                'source'               => (string) $row['source'],
+                'sourceBookId'         => $isbn13 ?? ('eb_' . $bookId),
+                'providerBookId'       => $row['provider_book_id'] !== null ? (string) $row['provider_book_id'] : null,
+                'title'                => (string) $row['title'],
+                'author'               => (string) $row['author'],
+                'coverUrl'             => $row['cover_url'] !== null ? (string) $row['cover_url'] : null,
+                'description'          => $row['description'] !== null ? (string) $row['description'] : null,
+                'summary'              => $row['summary']  !== null ? (string) $row['summary']  : null,
+                'whyRead'              => $row['why_read'] !== null ? (string) $row['why_read'] : null,
+                'pages'                => (int) $row['pages'],
+                'genre'                => $row['genre'] !== null ? (string) $row['genre'] : null,
+                'publicationYear'      => $row['publication_year'] !== null ? (int) $row['publication_year'] : null,
+                'language'             => (string) $row['language'],
+                'difficulty'           => $row['difficulty'] !== null ? (string) $row['difficulty'] : null,
+                'tags'                 => $tagsByBook[$bookId] ?? [],
+                'isbn13'               => $isbn13,
+                'isbn10'               => $row['isbn10'] !== null ? (string) $row['isbn10'] : null,
+                'isbnDbBookId'         => null,
+                'googleVolumeId'       => null,
+                'openLibraryEditionId' => null,
+            ];
+        }
+
+        return $items;
+    }
+
+    /**
      * Fetches tags grouped by book id.
      *
      * @param  list<int> $bookIds

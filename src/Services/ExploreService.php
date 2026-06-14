@@ -18,4 +18,9 @@ final class ExploreService
     {
         return (new ExploreRepository())->allSections();
     }
+
+    public function randomBooks(int $limit = 4): array
+    {
+        return (new ExploreRepository())->randomBooks($limit);
+    }
 }

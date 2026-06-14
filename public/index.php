@@ -355,7 +355,8 @@ $router->add('GET', "{$prefix}/activity", fn() => $activityCtrl->index());
 $router->add('GET', "{$prefix}/recommendations", fn() => $recommendations->index());
 
 // Explorer
-$router->add('GET', "{$prefix}/explore", fn() => $exploreCtrl->sections());
+$router->add('GET', "{$prefix}/explore",        fn() => $exploreCtrl->sections());
+$router->add('GET', "{$prefix}/explore/random", fn() => $exploreCtrl->random());
 $router->add('GET', "{$prefix}/explore/search", function () use ($exploreCtrl) {
     RateLimiter::check('book:search:' . RateLimiter::ip(), 30, 60);
     $exploreCtrl->search();
