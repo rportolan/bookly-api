@@ -55,11 +55,7 @@ final class FeedbackController
         $helpfulness = trim((string)($body['helpfulness'] ?? ''));
         $readingMotivation = trim((string)($body['readingMotivation'] ?? ''));
         $favoriteFeatures = $body['favoriteFeatures'] ?? [];
-        $painPoints = $body['painPoints'] ?? [];
         $improvementPriority = trim((string)($body['improvementPriority'] ?? ''));
-        $desiredFeatures = $body['desiredFeatures'] ?? [];
-        $readerProfile = trim((string)($body['readerProfile'] ?? ''));
-        $improveOneThing = trim((string)($body['improveOneThing'] ?? ''));
         $suggestion = trim((string)($body['suggestion'] ?? ''));
 
         $this->assertRequiredChoice(
@@ -84,57 +80,21 @@ final class FeedbackController
             $favoriteFeatures,
             'favoriteFeatures',
             0,
-            12,
+            14,
             [
                 'tracking',
                 'daily_goals',
+                'weekly_activity',
                 'statistics',
                 'quotes',
                 'vocabulary',
-                'summaries_analysis',
-                'xp_levels',
-                'cards_rewards',
+                'summaries',
+                'characters',
+                'notes',
+                'quiz',
+                'flashcards',
                 'design',
                 'simplicity',
-                'other',
-            ],
-            true
-        );
-
-        $painPoints = $this->sanitizeArrayOfStrings(
-            $painPoints,
-            'painPoints',
-            0,
-            12,
-            [
-                'design_lacks_polish',
-                'lack_of_clarity',
-                'features_not_useful',
-                'missing_features',
-                'gamification_not_interesting',
-                'lack_of_fluidity',
-                'dont_understand_what_to_do',
-                'not_motivating_enough',
-                'nothing_special',
-                'other',
-            ],
-            true
-        );
-
-        $desiredFeatures = $this->sanitizeArrayOfStrings(
-            $desiredFeatures,
-            'desiredFeatures',
-            0,
-            12,
-            [
-                'more_gamification',
-                'more_statistics',
-                'better_retention',
-                'more_personalization',
-                'reading_recommendations',
-                'more_simplicity',
-                'more_goals_challenges',
-                'more_educational_content',
                 'other',
             ],
             true
@@ -147,35 +107,13 @@ final class FeedbackController
                 'ux_fluidity',
                 'reading_features',
                 'statistics',
-                'gamification',
-                'quiz_content',
+                'learning',
+                'explore',
                 'clarity',
                 'other',
             ],
             'improvementPriority'
         );
-
-        $this->assertRequiredChoice(
-            $readerProfile,
-            [
-                'learn',
-                'pleasure',
-                'occasional',
-                'habit',
-                'retention',
-                'mixed',
-            ],
-            'readerProfile'
-        );
-
-        if (mb_strlen($improveOneThing) > 1500) {
-            throw new HttpException(
-                422,
-                'VALIDATION_ERROR',
-                ['field' => 'improveOneThing'],
-                'improveOneThing is too long'
-            );
-        }
 
         if (mb_strlen($suggestion) > 1500) {
             throw new HttpException(
@@ -191,11 +129,7 @@ final class FeedbackController
             'helpfulness' => $helpfulness,
             'reading_motivation' => $readingMotivation,
             'favorite_features' => $favoriteFeatures,
-            'pain_points' => $painPoints,
             'improvement_priority' => $improvementPriority,
-            'desired_features' => $desiredFeatures,
-            'reader_profile' => $readerProfile,
-            'improve_one_thing' => $improveOneThing !== '' ? $improveOneThing : null,
             'suggestion' => $suggestion !== '' ? $suggestion : null,
         ]);
 
@@ -393,11 +327,7 @@ final class FeedbackController
             'helpfulness' => (string)($r['helpfulness'] ?? ''),
             'readingMotivation' => (string)($r['reading_motivation'] ?? ''),
             'favoriteFeatures' => $this->decodeJsonArray($r['favorite_features'] ?? null),
-            'painPoints' => $this->decodeJsonArray($r['pain_points'] ?? null),
             'improvementPriority' => (string)($r['improvement_priority'] ?? ''),
-            'desiredFeatures' => $this->decodeJsonArray($r['desired_features'] ?? null),
-            'readerProfile' => (string)($r['reader_profile'] ?? ''),
-            'improveOneThing' => $r['improve_one_thing'] ?? null,
             'suggestion' => $r['suggestion'] ?? null,
             'createdAt' => $r['created_at'] ?? null,
         ];

@@ -212,10 +212,6 @@ $router->add('GET',  "{$prefix}/me",              fn() => $auth->me());
 $router->add('POST', "{$prefix}/auth/refresh",    fn() => $auth->refresh());
 $router->add('POST', "{$prefix}/auth/logout-all", fn() => $auth->logoutAll());
 
-// Google OAuth
-$router->add('GET', "{$prefix}/auth/google/start",    fn() => $auth->googleStart());
-$router->add('GET', "{$prefix}/auth/google/callback", fn() => $auth->googleCallback());
-
 // Magic link
 $router->add('POST', "{$prefix}/auth/magic-link/request", function () use ($auth) {
     RateLimiter::check('auth:magic:' . RateLimiter::ip(), 5, 300);

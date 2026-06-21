@@ -34,15 +34,6 @@ final class UserRepository
         return $u ?: null;
     }
 
-    public function findByGoogleId(string $googleId): ?array
-    {
-        $pdo  = Db::pdo();
-        $stmt = $pdo->prepare("SELECT * FROM users WHERE google_id = :gid LIMIT 1");
-        $stmt->execute(['gid' => $googleId]);
-        $u = $stmt->fetch();
-        return $u ?: null;
-    }
-
     public function create(array $data): int
     {
         $pdo = Db::pdo();
@@ -95,19 +86,6 @@ final class UserRepository
         Db::pdo()->prepare("
             UPDATE users SET email_verified_at = NOW() WHERE id = :id LIMIT 1
         ")->execute(['id' => $userId]);
-    }
-
-    public function linkGoogleId(int $userId, string $googleId, ?string $avatarUrl): void
-    {
-        $pdo  = Db::pdo();
-        $stmt = $pdo->prepare("
-            UPDATE users
-            SET google_id = :gid,
-                avatar_url = COALESCE(:avatar, avatar_url),
-                email_verified_at = COALESCE(email_verified_at, NOW())
-            WHERE id = :id LIMIT 1
-        ");
-        $stmt->execute(['gid' => $googleId, 'avatar' => $avatarUrl, 'id' => $userId]);
     }
 
     public function saveOnboarding(
