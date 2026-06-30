@@ -146,6 +146,22 @@ $router->add('GET', '/', function () {
 });
 
 /**
+ * Logo Readout (utilisé dans les emails)
+ */
+$router->add('GET', '/readout-logo.png', function () {
+    $path = __DIR__ . '/readout-logo.png';
+    if (is_file($path)) {
+        header('Content-Type: image/png');
+        header('Cache-Control: public, max-age=2592000');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
+    http_response_code(404);
+    exit;
+});
+
+/**
  * Controllers
  */
 $health        = new HealthController();

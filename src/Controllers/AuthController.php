@@ -837,6 +837,7 @@ final class AuthController
         $extra = (string)($data['extra'] ?? '');
 
         $font = "'Jost',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+        $logoUrl = rtrim((string)Env::get('APP_URL', 'http://localhost:8080'), '/') . '/readout-logo.png';
 
         $button = $buttonLabel !== '' ? "
                     <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 24px;\">
@@ -864,9 +865,8 @@ final class AuthController
             <div style=\"max-width:520px;margin:0 auto;font-family:{$font};color:#f4f4f3;\">
 
                 <div style=\"text-align:center;margin-bottom:26px;\">
-                    <span style=\"display:inline-block;font-size:22px;font-weight:900;letter-spacing:-.4px;color:#f4f4f3;\">
-                        <span style=\"display:inline-block;width:10px;height:10px;border-radius:50%;background:#685BFF;vertical-align:middle;margin-right:9px;\"></span>Readout
-                    </span>
+                    <img src=\"{$logoUrl}\" alt=\"Readout\" width=\"42\" height=\"42\" style=\"display:inline-block;vertical-align:middle;border-radius:11px;\" />
+                    <span style=\"display:inline-block;vertical-align:middle;margin-left:12px;font-size:22px;font-weight:900;letter-spacing:-.4px;color:#f4f4f3;\">Readout</span>
                 </div>
 
                 <div style=\"background:#1a1c1b;border:1px solid #2a2c2b;border-radius:22px;padding:36px 30px;\">
@@ -1208,18 +1208,18 @@ final class AuthController
     private function sendOtpEmail(string $email, string $code): void
     {
         $digits = str_split($code);
+        $font = "'Jost',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
 
-        $digitBoxes = '';
+        // Table = une seule ligne garantie (les <td> ne wrappent jamais),
+        // cases compactes pour tenir sur les écrans mobiles étroits.
+        $cells = '';
         foreach ($digits as $d) {
-            $digitBoxes .= "
-                <span style=\"display:inline-block;width:46px;height:58px;line-height:58px;text-align:center;
-                              font-family:'Jost',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
-                              font-size:26px;font-weight:800;color:#ffffff;
-                              background:#222423;border:1px solid #34363a;border-radius:12px;
-                              margin:0 4px;letter-spacing:0;\">
-                    {$d}
-                </span>";
+            $cells .= "<td style=\"width:40px;height:52px;text-align:center;vertical-align:middle;"
+                . "font-family:{$font};font-size:23px;font-weight:800;color:#ffffff;"
+                . "background:#222423;border:1px solid #34363a;border-radius:12px;\">{$d}</td>";
         }
+        $digitBoxes = "<table role=\"presentation\" align=\"center\" cellpadding=\"0\" cellspacing=\"6\" "
+            . "style=\"margin:28px auto;border-collapse:separate;\"><tr>{$cells}</tr></table>";
 
         $html = $this->buildEmailLayout([
             'eyebrow'     => 'Connexion à Readout',
@@ -1228,7 +1228,7 @@ final class AuthController
             'buttonLabel' => '',
             'buttonUrl'   => '',
             'note'        => "Si tu n'es pas à l'origine de cette demande, ignore cet email. Ne partage jamais ce code.",
-            'extra'       => "<div style=\"text-align:center;margin:28px 0;\">{$digitBoxes}</div>",
+            'extra'       => $digitBoxes,
         ]);
 
         Mailer::send($email, 'Ton code de connexion Readout', $html);
