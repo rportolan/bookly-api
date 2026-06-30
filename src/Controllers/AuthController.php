@@ -836,53 +836,65 @@ final class AuthController
         $note = htmlspecialchars((string)($data['note'] ?? ''), ENT_QUOTES, 'UTF-8');
         $extra = (string)($data['extra'] ?? '');
 
+        $font = "'Jost',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+
+        $button = $buttonLabel !== '' ? "
+                    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 24px;\">
+                        <tr>
+                            <td style=\"border-radius:14px;background:#685BFF;\">
+                                <a href=\"{$buttonUrl}\"
+                                   style=\"display:inline-block;padding:15px 28px;font-family:{$font};font-size:15px;font-weight:800;color:#ffffff;text-decoration:none;border-radius:14px;\">
+                                    {$buttonLabel}
+                                </a>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div style=\"padding:14px 16px;border-radius:12px;background:#1f211f;border:1px solid #2c2e2c;\">
+                        <p style=\"margin:0 0 6px;font-family:{$font};font-size:11px;font-weight:700;color:#7f817e;text-transform:uppercase;letter-spacing:.08em;\">
+                            Lien direct
+                        </p>
+                        <p style=\"margin:0;font-family:{$font};font-size:13px;line-height:1.7;word-break:break-all;color:#a8aaa6;\">
+                            {$buttonUrl}
+                        </p>
+                    </div>" : "";
+
         return "
-        <div style=\"margin:0;padding:32px 16px;background:#f8fafc;\">
-            <div style=\"max-width:560px;margin:0 auto;font-family:Inter,Arial,sans-serif;color:#0f172a;\">
-                <div style=\"text-align:center;margin-bottom:18px;\">
-                    <div style=\"display:inline-block;padding:8px 14px;border-radius:999px;background:#ede9fe;color:#6d28d9;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;\">
-                        {$eyebrow}
-                    </div>
+        <div style=\"margin:0;padding:36px 16px;background:#101211;\">
+            <div style=\"max-width:520px;margin:0 auto;font-family:{$font};color:#f4f4f3;\">
+
+                <div style=\"text-align:center;margin-bottom:26px;\">
+                    <span style=\"display:inline-block;font-size:22px;font-weight:900;letter-spacing:-.4px;color:#f4f4f3;\">
+                        <span style=\"display:inline-block;width:10px;height:10px;border-radius:50%;background:#685BFF;vertical-align:middle;margin-right:9px;\"></span>Readout
+                    </span>
                 </div>
 
-                <div style=\"background:#ffffff;border:1px solid #e2e8f0;border-radius:24px;padding:36px 32px;box-shadow:0 18px 40px rgba(15,23,42,.08);\">
-                    <h1 style=\"margin:0 0 12px;font-size:28px;line-height:1.15;letter-spacing:-0.03em;color:#0f172a;\">
+                <div style=\"background:#1a1c1b;border:1px solid #2a2c2b;border-radius:22px;padding:36px 30px;\">
+                    <div style=\"display:inline-block;padding:6px 13px;border-radius:999px;background:#201f3a;color:#9b8cff;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin-bottom:18px;\">
+                        {$eyebrow}
+                    </div>
+
+                    <h1 style=\"margin:0 0 12px;font-size:26px;line-height:1.18;letter-spacing:-.6px;color:#f4f4f3;font-weight:900;\">
                         {$title}
                     </h1>
 
-                    <p style=\"margin:0 0 28px;font-size:15px;line-height:1.7;color:#475569;\">
+                    <p style=\"margin:0 0 26px;font-size:15px;line-height:1.7;color:#a8aaa6;\">
                         {$intro}
                     </p>
 
                     {$extra}
 
-                    " . ($buttonLabel !== '' ? "
-                    <div style=\"margin:0 0 28px;\">
-                        <a href=\"{$buttonUrl}\"
-                           style=\"display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(180deg,#8b5cf6 0%,#7c3aed 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;\">
-                            {$buttonLabel}
-                        </a>
-                    </div>
+                    {$button}
 
-                    <div style=\"padding:16px 18px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;\">
-                        <p style=\"margin:0 0 8px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;\">
-                            Lien direct
-                        </p>
-                        <p style=\"margin:0;font-size:13px;line-height:1.7;word-break:break-all;color:#475569;\">
-                            {$buttonUrl}
-                        </p>" : "") . "
-                    </div>
+                    <hr style=\"border:none;border-top:1px solid #2a2c2b;margin:26px 0;\">
 
-                    <hr style=\"border:none;border-top:1px solid #e2e8f0;margin:28px 0;\">
-
-                    <p style=\"margin:0;font-size:13px;line-height:1.7;color:#64748b;\">
+                    <p style=\"margin:0;font-size:13px;line-height:1.7;color:#7f817e;\">
                         {$note}
                     </p>
                 </div>
 
-                <p style=\"margin:16px 0 0;text-align:center;font-size:12px;line-height:1.6;color:#94a3b8;\">
-                    Email automatique envoyé par Readout.
-                    Pense à vérifier tes spams ou courriers indésirables si nécessaire.
+                <p style=\"margin:18px 0 0;text-align:center;font-size:12px;line-height:1.6;color:#5e605d;\">
+                    Email automatique envoyé par Readout. Pense à vérifier tes spams si besoin.
                 </p>
             </div>
         </div>
@@ -1200,10 +1212,11 @@ final class AuthController
         $digitBoxes = '';
         foreach ($digits as $d) {
             $digitBoxes .= "
-                <span style=\"display:inline-block;width:44px;height:54px;line-height:54px;text-align:center;
-                              font-size:28px;font-weight:800;color:#0f172a;
-                              background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;
-                              margin:0 3px;letter-spacing:0;\">
+                <span style=\"display:inline-block;width:46px;height:58px;line-height:58px;text-align:center;
+                              font-family:'Jost',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+                              font-size:26px;font-weight:800;color:#ffffff;
+                              background:#222423;border:1px solid #34363a;border-radius:12px;
+                              margin:0 4px;letter-spacing:0;\">
                     {$d}
                 </span>";
         }
