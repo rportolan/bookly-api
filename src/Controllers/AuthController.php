@@ -186,6 +186,19 @@ final class AuthController
             return;
         }
 
+        // Compte de review (Google Play / App Store) : pas d'envoi d'email,
+        // le code est fixe et vérifié dans magicLinkVerifyCode. Actif seulement
+        // si REVIEW_EMAIL est défini côté serveur.
+        $reviewEmail = strtolower(trim((string)Env::get('REVIEW_EMAIL', '')));
+        if ($reviewEmail !== '' && $email === $reviewEmail) {
+            $repo = new UserRepository();
+            if (!$repo->findByEmail($email)) {
+                $repo->create(['email' => $email, 'email_verified_at' => null]);
+            }
+            Response::ok(['sent' => true]);
+            return;
+        }
+
         $repo = new UserRepository();
         $user = $repo->findByEmail($email);
 
@@ -228,6 +241,33 @@ final class AuthController
 
         if ($email === '' || $code === '') {
             throw new HttpException(422, 'VALIDATION_ERROR', ['required' => ['email', 'code']], 'Missing fields');
+        }
+
+        // Compte de review : email + code fixes définis côté serveur → on
+        // délivre directement les tokens sans passer par la table des codes.
+        $reviewEmail = strtolower(trim((string)Env::get('REVIEW_EMAIL', '')));
+        $reviewCode  = trim((string)Env::get('REVIEW_OTP_CODE', ''));
+        if ($reviewEmail !== '' && $reviewCode !== '' && $email === $reviewEmail && $code === $reviewCode) {
+            $userRepo = new UserRepository();
+            $user = $userRepo->findByEmail($email);
+            if (!$user) {
+                $newId = $userRepo->create(['email' => $email, 'email_verified_at' => null]);
+                $user  = $userRepo->findById($newId);
+            }
+            $userId = (int)$user['id'];
+            $userRepo->markEmailVerified($userId);
+            [$at, $rt] = $this->issueTokens($userId);
+            Response::ok([
+                'user'   => $this->publicUser($user),
+                'tokens' => [
+                    'tokenType'    => 'Bearer',
+                    'accessToken'  => $at,
+                    'refreshToken' => $rt,
+                    'expiresIn'    => (int)Env::get('JWT_ACCESS_TTL', '900'),
+                ],
+                'isNew' => empty($user['onboarding_completed']),
+            ]);
+            return;
         }
 
         $hash   = hash('sha256', $code);
